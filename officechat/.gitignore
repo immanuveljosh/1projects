@@ -8,6 +8,8 @@ deploy/.env.*
 *.pem
 *.key
 *.crt
+local.properties
+*/local.properties
 
 # Build artifacts & Binaries
 backend/bin/
@@ -15,10 +17,17 @@ backend/dist/
 web/dist/
 web/build/
 deploy/caddy/caddy
+.gradle/
+*/.gradle/
+build/
+*/build/
+*/*/build/
+*.apk
+*.aab
 
 # OS and IDE files
 .DS_Store
 Thumbs.db
 .idea/
-.vscode/
+*.iml
 *.swp
