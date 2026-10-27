@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -48,10 +49,14 @@ func main() {
 	}
 	defer database.Close()
 
-	// Apply migrations
-	migrationPath := "migrations"
-	if err := database.RunMigrations(migrationPath); err != nil {
-		log.Printf("[DB] Warning: RunMigrations returned: %v", err)
+	// Apply migrations if enabled
+	if cfg.RunMigrations {
+		migrationPath := "migrations"
+		if err := database.RunMigrations(migrationPath); err != nil {
+			log.Printf("[DB] Warning: RunMigrations returned: %v", err)
+		}
+	} else {
+		log.Println("[STARTUP] Automatic migrations disabled on API startup (managed via migration service)")
 	}
 
 	// Token Manager
@@ -86,7 +91,7 @@ func main() {
 	rateLimiter := middleware.NewRateLimiter(100, time.Minute)
 	r.Use(rateLimiter.Middleware())
 
-	// Health Check
+	// Health Check Endpoints
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		utils.JSON(w, http.StatusOK, map[string]any{
 			"status":    "healthy",
@@ -96,10 +101,53 @@ func main() {
 		})
 	})
 
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		utils.JSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+		})
+	})
+
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		dbErr := database.PingContext(ctx)
+		var redisErr error
+		if cfg.RedisHost != "" {
+			conn, err := net.DialTimeout("tcp", net.JoinHostPort(cfg.RedisHost, cfg.RedisPort), 2*time.Second)
+			if err != nil {
+				redisErr = err
+			} else {
+				_ = conn.Close()
+			}
+		}
+
+		if dbErr != nil || redisErr != nil {
+			status := map[string]any{
+				"status": "degraded",
+			}
+			if dbErr != nil {
+				status["database"] = dbErr.Error()
+			}
+			if redisErr != nil {
+				status["redis"] = redisErr.Error()
+			}
+			utils.JSON(w, http.StatusServiceUnavailable, status)
+			return
+		}
+
+		utils.JSON(w, http.StatusOK, map[string]any{
+			"status":   "ready",
+			"database": "connected",
+			"redis":    "connected",
+		})
+	})
+
 	// Realtime WebSocket Event Hub
 	hub := ws.NewHub(tm)
 	go hub.Run()
 	r.Get("/api/v1/ws", hub.ServeHTTP)
+	r.Get("/ws", hub.ServeHTTP)
 
 	// Authorizer for RBAC middleware
 	authorizer := middleware.NewSQLMemberAuthorizer(database.DB)

@@ -1,0 +1,191 @@
+{
+	# Global runtime options
+	admin off
+
+	# Order custom rate_limit directive before basic_auth / reverse_proxy
+	order rate_limit before basic_auth
+
+	# Restrict proxy trust to private network ranges
+	servers {
+		trusted_proxies static private_ranges
+		client_ip_headers X-Forwarded-For X-Real-IP
+	}
+}
+
+# Dedicated local healthcheck endpoint and HTTP->HTTPS redirect
+http://localhost:80, http://127.0.0.1:80 {
+	handle /healthz {
+		respond "ok" 200
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
+}
+
+(security_headers) {
+	header {
+		# Strict-Transport-Security (HSTS): 2 years, include subdomains, preload
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		# Prevent MIME type sniffing
+		X-Content-Type-Options "nosniff"
+		# Clickjacking defense
+		X-Frame-Options "DENY"
+		# Referrer Policy
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Hardware & browser features lockdown
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), display-capture=()"
+		# Strict Content-Security-Policy (allows secure WebSockets wss: and internal assets)
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' wss: https:; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+		# Strip Server banner
+		-Server
+	}
+}
+
+(rate_limiting) {
+	rate_limit {
+		zone auth_limiter {
+			key {client_ip}
+			events 10
+			window 1m
+			match {
+				path /api/v1/auth/* /auth/*
+			}
+		}
+		zone admin_limiter {
+			key {client_ip}
+			events 60
+			window 1m
+			match {
+				path /api/v1/admin/* /admin/*
+			}
+		}
+	}
+}
+
+# ==============================================================================
+# MAIN APPLICATION HOST
+# ==============================================================================
+{$DOMAIN:localhost} {
+	# TLS 1.2+ minimum, automatic internal CA or Let's Encrypt / ZeroSSL
+	tls {$TLS_MODE:internal} {
+		protocols tls1.2 tls1.3
+	}
+
+	import security_headers
+	import rate_limiting
+
+	# Enforce 25 MB request body limit matching application upload ceiling
+	request_body {
+		max_size 25MB
+	}
+
+	# Proxy health probe for container healthcheck
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# Realtime WebSocket Route (/api/v1/ws or /ws)
+	@websockets {
+		path /api/v1/ws /ws
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @websockets {
+		rewrite * /api/v1/ws
+		reverse_proxy api:8080 {
+			flush_interval -1
+			header_up Host {host}
+			header_up X-Real-IP {client_ip}
+			transport http {
+				response_header_timeout 60s
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+
+	# Backend API Endpoints
+	handle /api/* {
+		reverse_proxy api:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {client_ip}
+			transport http {
+				response_header_timeout 30s
+				read_timeout 60s
+				write_timeout 60s
+			}
+		}
+	}
+
+	# Storage access proxy for MinIO (authenticated via presigned URLs)
+	handle /storage/* {
+		uri strip_prefix /storage
+		reverse_proxy minio:9000 {
+			header_up Host {host}
+			header_up X-Real-IP {client_ip}
+		}
+	}
+
+	# Static Web Application (Unprivileged Nginx SPA)
+	handle {
+		reverse_proxy web:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {client_ip}
+		}
+	}
+
+	# Structured JSON Logging
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MB
+			roll_keep 3
+		}
+		format json
+	}
+}
+
+# ==============================================================================
+# OPTIONAL ADMIN CONSOLE SUBDOMAIN
+# ==============================================================================
+{$ADMIN_DOMAIN:admin.localhost} {
+	tls {$TLS_MODE:internal} {
+		protocols tls1.2 tls1.3
+	}
+
+	import security_headers
+	import rate_limiting
+
+	# Optional IP allowlist: if ADMIN_ALLOWED_IPS is configured, restrict access
+	@admin_restricted {
+		not client_ip {$ADMIN_ALLOWED_IPS:0.0.0.0/0}
+	}
+	handle @admin_restricted {
+		respond "Forbidden: Admin Console Access Restricted" 403
+	}
+
+	request_body {
+		max_size 25MB
+	}
+
+	handle /api/* {
+		reverse_proxy api:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {client_ip}
+		}
+	}
+
+	handle {
+		reverse_proxy web:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {client_ip}
+		}
+	}
+
+	log {
+		output file /var/log/caddy/admin_access.log {
+			roll_size 10MB
+			roll_keep 3
+		}
+		format json
+	}
+}

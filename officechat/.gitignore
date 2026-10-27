@@ -1,0 +1,24 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+*.pem
+*.key
+*.crt
+
+# Build artifacts & Binaries
+backend/bin/
+backend/dist/
+web/dist/
+web/build/
+deploy/caddy/caddy
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

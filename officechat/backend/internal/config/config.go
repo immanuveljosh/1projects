@@ -41,6 +41,7 @@ type Config struct {
 	MaxFileSizeMB      int64
 	VirusScanEnabled   bool
 	VirusScanMock      bool
+	RunMigrations      bool
 }
 
 func Load() *Config {
@@ -101,6 +102,8 @@ func Load() *Config {
 	maxFileSizeMB := getEnvAsInt64("MAX_FILE_SIZE_MB", 25)
 	virusScanEnabled := getEnvAsBool("VIRUS_SCAN_ENABLED", true)
 	virusScanMock := getEnvAsBool("VIRUS_SCAN_MOCK", true)
+	defaultRunMigrations := env != "production"
+	runMigrations := getEnvAsBool("RUN_MIGRATIONS", defaultRunMigrations)
 
 	return &Config{
 		Port:               port,
@@ -134,6 +137,7 @@ func Load() *Config {
 		MaxFileSizeMB:      maxFileSizeMB,
 		VirusScanEnabled:   virusScanEnabled,
 		VirusScanMock:      virusScanMock,
+		RunMigrations:      runMigrations,
 	}
 }
 

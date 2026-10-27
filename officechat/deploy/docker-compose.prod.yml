@@ -1,0 +1,433 @@
+# ==============================================================================
+# OfficeChat Hardened Production Docker Compose
+# Architecture:
+#   Edge Network     : Caddy (80/443 public) <-> Web (Nginx non-root) & API (Go distroless)
+#   Internal Network : API <-> PostgreSQL 16 (SCRAM), Redis 7 (Protected), MinIO (Private)
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # REVERSE PROXY & AUTOMATIC TLS
+  # ----------------------------------------------------------------------------
+  caddy:
+    build:
+      context: ./caddy
+      dockerfile: Dockerfile
+    image: officechat-caddy:production
+    container_name: officechat-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3 QUIC
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-admin.localhost}
+      TLS_MODE: ${TLS_MODE:-internal}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+      ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:-0.0.0.0/0}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /var/log/caddy:rw,noexec,nosuid,size=32m
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+          pids: 100
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - edge
+
+  # ----------------------------------------------------------------------------
+  # WEB APPLICATION (React static bundle via unprivileged Nginx)
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    image: officechat-web:production
+    container_name: officechat-web
+    restart: unless-stopped
+    expose:
+      - "8080"
+    user: "101:101"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /var/run:rw,noexec,nosuid,size=16m
+      - /var/cache/nginx:rw,noexec,nosuid,size=64m
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+          pids: 50
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - edge
+
+  # ----------------------------------------------------------------------------
+  # BACKEND API & WEBSOCKET ENGINE (Go Distroless static binary)
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: officechat-api:production
+    container_name: officechat-api
+    restart: unless-stopped
+    expose:
+      - "8080"
+    user: "65532:65532"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+          pids: 200
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      PORT: "8080"
+      ENV: "production"
+      APP_NAME: "OfficeChat"
+      APP_URL: "https://${DOMAIN:-chat.example.com}"
+      CLIENT_URL: "https://${DOMAIN:-chat.example.com}"
+      RUN_MIGRATIONS: "false" # Delegated to dedicated migration service
+      DB_HOST: "postgres"
+      DB_PORT: "5432"
+      DB_USER: "${DB_USER:-officechat}"
+      DB_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD is required}"
+      DB_NAME: "${DB_NAME:-officechat_prod}"
+      DB_SSLMODE: "disable" # SSL terminated at Caddy; private container-to-container network
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_PUBLIC_ENDPOINT: "https://${DOMAIN:-chat.example.com}/storage"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
+      MINIO_BUCKET: "${MINIO_BUCKET:-officechat-production-files}"
+      MINIO_USE_SSL: "false"
+      MINIO_REGION: "${MINIO_REGION:-us-east-1}"
+      JWT_ACCESS_SECRET: "${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}"
+      JWT_ACCESS_EXPIRY: "15m"
+      JWT_REFRESH_EXPIRY: "168h"
+      CORS_ALLOWED_ORIGINS: "https://${DOMAIN:-chat.example.com}"
+      MAX_FILE_SIZE_MB: "25"
+      VIRUS_SCAN_ENABLED: "${VIRUS_SCAN_ENABLED:-true}"
+      VIRUS_SCAN_MOCK: "${VIRUS_SCAN_MOCK:-false}"
+    healthcheck:
+      test: ["CMD", "/app/healthcheck", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    networks:
+      - edge
+      - internal
+
+  # ----------------------------------------------------------------------------
+  # DATABASE MIGRATIONS (One-shot deterministic schema migration)
+  # ----------------------------------------------------------------------------
+  migration:
+    image: officechat-api:production
+    container_name: officechat-migration
+    entrypoint: ["/app/officechat-migrate"]
+    user: "65532:65532"
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+          pids: 50
+    environment:
+      ENV: "production"
+      DB_HOST: "postgres"
+      DB_PORT: "5432"
+      DB_USER: "${DB_USER:-officechat}"
+      DB_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD is required}"
+      DB_NAME: "${DB_NAME:-officechat_prod}"
+      DB_SSLMODE: "disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  # ----------------------------------------------------------------------------
+  # POSTGRESQL 16 (SCRAM-SHA-256 Auth, Isolated from Internet & Host)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16.8-alpine3.21@sha256:3b057e1c2c6dfee60a30950096f3fab33be141dbb0fdd7af3d477083de94166c
+    container_name: officechat-postgres
+    restart: unless-stopped
+    command: >
+      postgres
+      -c password_encryption=scram-sha-256
+      -c max_connections=150
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+    environment:
+      POSTGRES_USER: "${DB_USER:-officechat}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD is required}"
+      POSTGRES_DB: "${DB_NAME:-officechat_prod}"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    user: "70:70"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /var/run/postgresql:rw,noexec,nosuid,size=16m
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+          pids: 150
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - internal
+
+  # ----------------------------------------------------------------------------
+  # REDIS 7 (Protected mode, requirepass, dangerous commands disabled)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7.4.2-alpine3.21@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952
+    container_name: officechat-redis
+    restart: unless-stopped
+    command: >
+      sh -c 'redis-server
+      --requirepass "$$REDIS_PASSWORD"
+      --protected-mode yes
+      --save 900 1
+      --save 300 10
+      --appendonly yes
+      --rename-command FLUSHALL ""
+      --rename-command FLUSHDB ""
+      --rename-command CONFIG ""
+      --rename-command DEBUG ""'
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
+    volumes:
+      - redis_data:/data
+    user: "999:999"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+          pids: 50
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - internal
+
+  # ----------------------------------------------------------------------------
+  # MINIO S3 OBJECT STORAGE (Private buckets, Web console disabled)
+  # ----------------------------------------------------------------------------
+  minio:
+    image: rancher/mirrored-minio-minio:RELEASE.2023-07-07T07-13-57Z@sha256:e8dc751a74e9d353b86f18bbf227de1aa327bedb9102c0d202467c4e7e0a4f90
+    container_name: officechat-minio
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}"
+      MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
+      MINIO_BROWSER: "off" # Attack surface reduction: disable web UI console
+    volumes:
+      - minio_data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+          pids: 100
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -f http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - internal
+
+  # ----------------------------------------------------------------------------
+  # MINIO INITIALIZER (One-shot private bucket setup)
+  # ----------------------------------------------------------------------------
+  minio-init:
+    image: rancher/mirrored-minio-mc:RELEASE.2023-06-28T21-54-17Z@sha256:8ccda10d75b985ca53a952f15ebc1bc0996a2620ece66a09f5ee6a4622563a1e
+    container_name: officechat-minio-init
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}"
+      MINIO_BUCKET: "${MINIO_BUCKET:-officechat-production-files}"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        /usr/bin/mc alias set local http://minio:9000 "$$MINIO_ACCESS_KEY" "$$MINIO_SECRET_KEY" &&
+        /usr/bin/mc mb --ignore-existing local/"$${MINIO_BUCKET:-officechat-production-files}" &&
+        /usr/bin/mc anonymous set none local/"$${MINIO_BUCKET:-officechat-production-files}" &&
+        exit 0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /root/.mc:rw,noexec,nosuid,size=16m
+    networks:
+      - internal
+
+# ==============================================================================
+# VOLUMES & ISOLATED NETWORKS
+# ==============================================================================
+volumes:
+  postgres_data:
+    name: officechat-postgres-data
+  redis_data:
+    name: officechat-redis-data
+  minio_data:
+    name: officechat-minio-data
+  caddy_data:
+    name: officechat-caddy-data
+  caddy_config:
+    name: officechat-caddy-config
+
+networks:
+  # Edge network: reverse proxy, web static frontend, and API gateway
+  edge:
+    name: officechat-edge
+    driver: bridge
+
+  # Internal network: strictly isolated, NO internet egress, databases & storage only
+  internal:
+    name: officechat-internal
+    driver: bridge
+    internal: true
