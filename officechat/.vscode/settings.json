@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "Caddyfile": "caddyfile",
+    "**/Caddyfile": "caddyfile",
+    "docker-compose*.yml": "dockercompose",
+    "docker-compose*.yaml": "dockercompose"
+  }
+}
