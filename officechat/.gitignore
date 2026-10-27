@@ -1,15 +1,16 @@
 # Environment & Secrets
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
-deploy/.env
-deploy/.env.*
-!deploy/.env.example
+!**/.env.example
 *.pem
 *.key
 *.crt
 local.properties
 */local.properties
+**/local.properties
 
 # Build artifacts & Binaries
 backend/bin/
@@ -19,9 +20,11 @@ web/build/
 deploy/caddy/caddy
 .gradle/
 */.gradle/
+**/.gradle/
 build/
 */build/
 */*/build/
+**/build/
 *.apk
 *.aab
 
@@ -29,5 +32,6 @@ build/
 .DS_Store
 Thumbs.db
 .idea/
+**/.idea/
 *.iml
 *.swp

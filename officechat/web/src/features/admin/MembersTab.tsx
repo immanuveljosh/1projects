@@ -150,7 +150,16 @@ export const MembersTab: React.FC<MembersTabProps> = ({
   }, [search, roleFilter, statusFilter, stateFilter, currentUserId, members.length]);
 
   useEffect(() => {
-    loadMembers();
+    let ignore = false;
+    const timer = setTimeout(() => {
+      if (!ignore) {
+        void loadMembers();
+      }
+    }, 0);
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
   }, [loadMembers]);
 
   const handleNextPage = () => {

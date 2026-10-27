@@ -116,7 +116,16 @@ export const AuditTab: React.FC<AuditTabProps> = ({ onToast }) => {
   }, [actionSearch, targetSearch, startDate, endDate, logs.length]);
 
   useEffect(() => {
-    loadLogs();
+    let ignore = false;
+    const timer = setTimeout(() => {
+      if (!ignore) {
+        void loadLogs();
+      }
+    }, 0);
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
   }, [loadLogs]);
 
   const handleExportCSV = async () => {

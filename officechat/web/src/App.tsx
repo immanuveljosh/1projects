@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Hash,
   Lock,
@@ -298,9 +298,9 @@ export default function App() {
 
 
   /* Action Toasts - visibly hidden per user request */
-  const addToast = (_message?: string, _type?: Toast['type']) => {
+  const addToast = useCallback((_message?: string, _type?: Toast['type']) => {
     // Visibly hidden so action logs do not pop up on screen
-  };
+  }, []);
 
   /* Theme Sync */
   useEffect(() => {
@@ -324,7 +324,9 @@ export default function App() {
   }, []);
 
   /* Admin Console State & Guard */
-  const [showAdminConsole, setShowAdminConsole] = useState(false);
+  const [showAdminConsole, setShowAdminConsole] = useState(() => {
+    return typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
+  });
 
   /* Current Authenticated User (Strict 4-tier roles: Owner, Admin, Member, Guest) */
   const [currentUser, setCurrentUser] = useState<User>({
@@ -343,14 +345,16 @@ export default function App() {
   useEffect(() => {
     if (window.location.pathname.startsWith('/admin')) {
       const role = (currentUser.role || '').toLowerCase();
-      if (role === 'owner' || role === 'admin') {
-        setShowAdminConsole(true);
-      } else {
-        addToast('Access denied: Admin Console requires Owner or Admin role', 'warning');
-        window.history.replaceState({}, '', '/');
+      if (role !== 'owner' && role !== 'admin') {
+        const timer = setTimeout(() => {
+          setShowAdminConsole(false);
+          addToast('Access denied: Admin Console requires Owner or Admin role', 'warning');
+          window.history.replaceState({}, '', '/');
+        }, 0);
+        return () => clearTimeout(timer);
       }
     }
-  }, [currentUser.role]);
+  }, [currentUser.role, addToast]);
 
   const [customStatusInput, setCustomStatusInput] = useState(currentUser.customStatus || '');
 
@@ -755,13 +759,14 @@ export default function App() {
   };
 
   /* Forward Message */
-  const handleForwardMessage = (targetConv: Conversation) => {
+  const handleForwardMessage = useCallback((targetConv: Conversation) => {
     if (!forwardingMessage) return;
+    const now = new Date();
     const forwardedMsg: Message = {
-      id: 'm_' + Date.now(),
+      id: 'm_' + now.getTime(),
       sender: currentUser,
       content: `↪️ Forwarded: ${forwardingMessage.content}`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       rawDate: 'Today',
       reactions: [],
       status: 'delivered'
@@ -769,7 +774,7 @@ export default function App() {
     setMessages(prev => [...prev, forwardedMsg]);
     setForwardingMessage(null);
     addToast(`Message forwarded to ${targetConv.name}`, 'success');
-  };
+  }, [forwardingMessage, currentUser, addToast]);
 
   /* Send thread reply */
   const handleSendThreadReply = () => {

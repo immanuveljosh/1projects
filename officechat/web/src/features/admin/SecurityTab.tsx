@@ -21,7 +21,7 @@ interface SecurityTabProps {
 }
 
 export const SecurityTab: React.FC<SecurityTabProps> = ({ onToast }) => {
-  const [settings, setSettings] = useState<WorkspaceSettings>({
+  const [settings, setSettings] = useState<WorkspaceSettings>(() => ({
     workspace_id: 'default',
     min_password_length: 8,
     require_special_char: true,
@@ -33,8 +33,8 @@ export const SecurityTab: React.FC<SecurityTabProps> = ({ onToast }) => {
     session_timeout_mins: 10080,
     retention_days: 0,
     allow_guest_invites: false,
-    updated_at: new Date().toISOString(),
-  });
+    updated_at: '',
+  }));
 
   const [isSavingPolicy, setIsSavingPolicy] = useState(false);
 

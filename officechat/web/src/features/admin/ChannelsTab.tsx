@@ -126,7 +126,16 @@ export const ChannelsTab: React.FC<ChannelsTabProps> = ({ onToast }) => {
   }, [search, typeFilter, archivedFilter, channels.length]);
 
   useEffect(() => {
-    loadChannels();
+    let ignore = false;
+    const timer = setTimeout(() => {
+      if (!ignore) {
+        void loadChannels();
+      }
+    }, 0);
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
   }, [loadChannels]);
 
   const handleOpenEdit = async (chan: AdminChannel) => {
@@ -146,7 +155,7 @@ export const ChannelsTab: React.FC<ChannelsTabProps> = ({ onToast }) => {
             email: 'admin@officechat.local',
             avatar_url: '',
             role: 'Admin',
-            joined_at: new Date().toISOString(),
+            joined_at: '',
           }
         ]
       });
