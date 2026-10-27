@@ -1,0 +1,684 @@
+/* ==========================================================================
+   OFFICECHAT DESIGN SYSTEM TOKENS & FOUNDATIONS
+   Slack / Linear aesthetic with 3 surface levels, WCAG AA contrast, 4px grid.
+   ========================================================================== */
+
+:root {
+  /* --- Typography --- */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Font Scale */
+  --text-2xs: 10px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 20px;
+  --text-3xl: 24px;
+
+  /* --- Spacing (4px scale) --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* --- Radii --- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* --- Motion & Transitions --- */
+  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-smooth: 220ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --- Primary Brand Accent (Used sparingly) --- */
+  --primary: #6366f1;           /* Indigo-500 */
+  --primary-hover: #4f46e5;     /* Indigo-600 */
+  --primary-active: #4338ca;    /* Indigo-700 */
+  --primary-subtle: rgba(99, 102, 241, 0.12);
+  --primary-border: rgba(99, 102, 241, 0.32);
+  --primary-glow: 0 0 0 3px rgba(99, 102, 241, 0.28);
+
+  /* Semantic status indicators */
+  --status-online: #22c55e;
+  --status-away: #f59e0b;
+  --status-dnd: #ef4444;
+  --status-offline: #64748b;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+
+  /* ========================================================================
+     DARK THEME (Default)
+     Level 1: Deep Navy/Charcoal app background (#0B0D14)
+     Level 2: Sidebar & Header navigation (#11141D)
+     Level 3: Elevated cards, composer, modals & hover states (#181C28)
+     ======================================================================== */
+  --surface-level-1: #0b0d14;
+  --surface-level-2: #11141d;
+  --surface-level-3: #181c28;
+  --surface-hover: #1e2333;
+  --surface-active: #252b3d;
+  --surface-input: #141722;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-hover: rgba(255, 255, 255, 0.18);
+
+  /* Text colors: High WCAG AA compliance against #0B0D14 and #11141D */
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-inverse: #0b0d14;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 14px -2px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 12px 32px -4px rgba(0, 0, 0, 0.7);
+  --shadow-floating: 0 16px 40px -6px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+}
+
+/* ========================================================================
+   LIGHT THEME OVERRIDES
+   ======================================================================== */
+[data-theme='light'] {
+  --surface-level-1: #f8fafc;
+  --surface-level-2: #ffffff;
+  --surface-level-3: #f1f5f9;
+  --surface-hover: #e2e8f0;
+  --surface-active: #cbd5e1;
+  --surface-input: #ffffff;
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.10);
+  --border-hover: rgba(0, 0, 0, 0.20);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-inverse: #ffffff;
+
+  --primary-subtle: rgba(99, 102, 241, 0.08);
+  --primary-border: rgba(99, 102, 241, 0.25);
+  --primary-glow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 28px -4px rgba(0, 0, 0, 0.12);
+  --shadow-floating: 0 16px 36px -6px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+}
+
+/* Base Styles */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  background-color: var(--surface-level-1);
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+/* Custom Thin Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Smooth Focus Rings */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: none;
+  box-shadow: var(--primary-glow);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+  transition: all var(--transition-fast);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* Keyframe Animations */
+@keyframes fadeInSlide {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toastSlide {
+  from {
+    transform: translateY(16px) scale(0.96);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-message-enter {
+  animation: fadeInSlide var(--transition-smooth) ease forwards;
+}
+
+.animate-slide-panel {
+  animation: slideInRight var(--transition-smooth) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-toast {
+  animation: toastSlide var(--transition-fast) ease forwards;
+}
+
+/* Skeleton Loading utility */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-level-2) 25%, var(--surface-level-3) 50%, var(--surface-level-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* Tooltip helper */
+[data-tooltip] {
+  position: relative;
+}
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.9);
+  background: var(--surface-level-3);
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  padding: 3px 7px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: all var(--transition-fast);
+  z-index: 1000;
+}
+[data-tooltip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+/* Code block highlight styling */
+.code-inline {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 2px 6px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  color: #e2e8f0;
+}
+
+.code-block {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: var(--space-3);
+  background: var(--surface-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: #e2e8f0;
+  margin: var(--space-2) 0;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+
+/* Mention chip */
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* Responsive Drawer for mobile */
+@media (max-width: 768px) {
+  .sidebar-responsive {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform var(--transition-smooth);
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar-responsive.open {
+    transform: translateX(0);
+  }
+}
+
+/* ==========================================================================
+   CONVERSATION ROW & SWIPE / HOVER QUICK ACTIONS
+   ========================================================================== */
+.chat-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+  border: 1px solid transparent;
+}
+
+.chat-row:hover:not(.active) {
+  background: var(--surface-hover);
+  transform: translateX(2px);
+}
+
+.chat-row.active {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.16) 0%, rgba(99, 102, 241, 0.04) 100%);
+  border-color: rgba(99, 102, 241, 0.28);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.chat-row.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 18%;
+  height: 64%;
+  width: 3.5px;
+  border-radius: 0 4px 4px 0;
+  background: var(--primary);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.75);
+}
+
+.chat-row-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%) translateX(16px);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--surface-level-3);
+  padding: 3px 5px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transition: all var(--transition-fast);
+  z-index: 5;
+}
+
+.chat-row:hover .chat-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+
+.chat-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.chat-action-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  transform: scale(1.1);
+}
+
+.chat-action-btn.delete:hover {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.15);
+}
+
+/* ==========================================================================
+   MESSAGE BUBBLES: SENT (BLUE RIGHT) VS RECEIVED (GRAY LEFT)
+   ========================================================================== */
+.message-bubble-wrapper {
+  display: flex;
+  width: 100%;
+  margin-bottom: 6px;
+  position: relative;
+}
+
+.message-bubble-wrapper.sent {
+  justify-content: flex-end;
+}
+
+.message-bubble-wrapper.received {
+  justify-content: flex-start;
+}
+
+.message-bubble {
+  max-width: 68%;
+  min-width: 120px;
+  position: relative;
+  padding: 11px 16px 9px 16px;
+  word-wrap: break-word;
+  transition: all var(--transition-fast);
+}
+
+/* Sent: Blue-to-Violet Gradient on Right */
+.bubble-sent {
+  background: linear-gradient(135deg, #4338ca 0%, #4f46e5 50%, #6366f1 100%);
+  color: #ffffff;
+  border-radius: 20px 20px 4px 20px;
+  box-shadow: 0 4px 20px rgba(79, 70, 229, 0.32);
+  margin-left: auto;
+}
+
+[data-theme='light'] .bubble-sent {
+  background: linear-gradient(135deg, #4338ca 0%, #4f46e5 100%);
+  color: #ffffff;
+}
+
+/* Received: Gray / Elevated Surface on Left */
+.bubble-received {
+  background: var(--surface-level-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 20px 20px 20px 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+/* Message Meta footer */
+.bubble-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  font-size: 11px;
+  margin-top: 4px;
+  user-select: none;
+}
+
+.bubble-sent .bubble-meta {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.bubble-received .bubble-meta {
+  color: var(--text-muted);
+}
+
+/* Delivery Status Ticks */
+.tick-sent {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.tick-delivered {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.tick-read {
+  color: #38bdf8 !important; /* Bright cyan / blue double tick */
+}
+
+/* Quoted Reply Box inside bubble */
+.bubble-quote {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  font-size: 12px;
+  border-left: 3px solid #38bdf8;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.bubble-received .bubble-quote {
+  background: var(--surface-level-3);
+  border-left-color: var(--primary);
+}
+
+
+
+/* ==========================================================================
+   REPLY & EDIT BANNER ABOVE COMPOSER
+   ========================================================================== */
+.composer-preview-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--surface-level-2);
+  border: 1px solid var(--border-default);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  animation: fadeIn 0.15s ease-out;
+}
+
+/* ==========================================================================
+   MESSAGE BUBBLE HOVER TOOLBAR & REACTIONS
+   ========================================================================== */
+.bubble-toolbar {
+  position: absolute;
+  top: -16px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-level-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 2px 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  transform: translateY(4px);
+  z-index: 35;
+}
+
+/* Hit-box bridge so moving cursor from bubble to toolbar never causes hover loss */
+.bubble-toolbar::before {
+  content: '';
+  position: absolute;
+  inset: -12px -8px -12px -8px;
+  z-index: -1;
+}
+
+.message-bubble-wrapper:hover .bubble-toolbar,
+.message-bubble:hover .bubble-toolbar,
+.bubble-toolbar:hover,
+.bubble-toolbar.active {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+  transform: translateY(0) !important;
+}
+
+.bubble-toolbar button {
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.bubble-toolbar button:hover {
+  background: var(--surface-hover);
+  transform: scale(1.15);
+}
+
+/* Reaction Picker Popover */
+.emoji-reaction-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  background: var(--surface-level-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: var(--shadow-floating);
+  z-index: 100;
+  animation: fadeInSlide 0.15s ease-out;
+}
+
+.emoji-reaction-popover button {
+  font-size: 16px;
+  padding: 3px 5px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.emoji-reaction-popover button:hover {
+  background: var(--surface-hover);
+  transform: scale(1.25);
+}
+
+
+
+/* ==========================================================================
+   COMPOSER DOCK & SEND BUTTON
+   ========================================================================== */
+.composer-dock {
+  background: var(--surface-level-2);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.composer-dock:focus-within {
+  border-color: rgba(99, 102, 241, 0.65);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.45), 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.send-btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+  color: #fff;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 10px rgba(79, 70, 229, 0.45);
+  transition: all var(--transition-fast);
+}
+
+.send-btn-primary:hover {
+  transform: scale(1.08);
+  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.65);
+}
+
+.send-btn-primary:active {
+  transform: scale(0.96);
+}
+
+.send-btn-disabled {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-full);
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  border: 1px solid var(--border-subtle);
+  opacity: 0.55;
+  transition: all var(--transition-fast);
+}
+
+
+

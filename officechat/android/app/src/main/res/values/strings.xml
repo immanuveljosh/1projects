@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">OfficeChat</string>
+    <string name="connecting">Connecting to OfficeChat...</string>
+    <string name="retry">Retry Connection</string>
+    <string name="server_settings">Server Settings</string>
+    <string name="enter_url">Enter OfficeChat Server URL</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="connection_error">Could not connect to OfficeChat server.\nPlease make sure the server is running.</string>
+</resources>

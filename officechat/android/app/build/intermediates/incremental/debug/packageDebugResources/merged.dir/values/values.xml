@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background_dark">#0f172a</color>
+    <color name="danger">#ef4444</color>
+    <color name="primary">#6366f1</color>
+    <color name="primary_dark">#4f46e5</color>
+    <color name="surface_dark">#1e293b</color>
+    <color name="text_muted">#94a3b8</color>
+    <color name="text_primary">#f8fafc</color>
+    <string name="app_name">OfficeChat</string>
+    <string name="cancel">Cancel</string>
+    <string name="connecting">Connecting to OfficeChat...</string>
+    <string name="connection_error">Could not connect to OfficeChat server.\nPlease make sure the server is running.</string>
+    <string name="enter_url">Enter OfficeChat Server URL</string>
+    <string name="retry">Retry Connection</string>
+    <string name="save">Save</string>
+    <string name="server_settings">Server Settings</string>
+    <style name="Theme.OfficeChat" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorOnPrimary">#ffffff</item>
+        <item name="android:statusBarColor">@color/background_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/background_dark</item>
+    </style>
+</resources>

@@ -1,0 +1,2255 @@
+openapi: 3.0.3
+info:
+  title: OfficeChat API
+  description: >
+    Production REST & WebSocket API specification for OfficeChat.
+    Used by both the Web application and the mobile (Flutter Android) application.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local Docker development server
+  - url: /api/v1
+    description: Relative API server path
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              example: INVALID_CREDENTIALS
+            message:
+              type: string
+              example: Invalid email or password
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+        status:
+          type: string
+          enum: [online, away, dnd, offline]
+        custom_status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/UserResponse'
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds
+          example: 900
+
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - full_name
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 6
+        full_name:
+          type: string
+        display_name:
+          type: string
+
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+        status:
+          type: string
+          enum: [online, away, dnd, offline]
+        custom_status:
+          type: string
+
+    Workspace:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        logo_url:
+          type: string
+        owner_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Channel:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        topic:
+          type: string
+        is_private:
+          type: boolean
+        is_archived:
+          type: boolean
+        is_announcement:
+          type: boolean
+        member_count:
+          type: integer
+        is_member:
+          type: boolean
+        unread_count:
+          type: integer
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+          nullable: true
+        dm_group_id:
+          type: string
+          format: uuid
+          nullable: true
+        sender_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        is_pinned:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        sender:
+          $ref: '#/components/schemas/UserResponse'
+        reactions:
+          type: array
+          items:
+            type: object
+            properties:
+              emoji:
+                type: string
+              count:
+                type: integer
+              has_reacted:
+                type: boolean
+        reply_count:
+          type: integer
+
+    DeviceToken:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+          nullable: true
+        token:
+          type: string
+        platform:
+          type: string
+          enum: [android, ios, web]
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+
+    RegisterDeviceTokenRequest:
+      type: object
+      required: [token, platform]
+      properties:
+        token:
+          type: string
+          example: "fcm_device_token_xyz"
+        platform:
+          type: string
+          enum: [android, ios, web]
+          example: "android"
+
+    WorkspaceMember:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [Owner, Admin, Member, Guest]
+        joined_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        user:
+          $ref: '#/components/schemas/UserResponse'
+
+    WorkspaceInvite:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+        max_uses:
+          type: integer
+        uses_count:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    DirectMessageGroup:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        is_group:
+          type: boolean
+        name:
+          type: string
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserResponse'
+        unread_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Attachment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+          nullable: true
+        workspace_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        file_size:
+          type: integer
+        content_type:
+          type: string
+        file_key:
+          type: string
+        file_url:
+          type: string
+        virus_scan_status:
+          type: string
+        uploaded_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    PollOption:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        option_text:
+          type: string
+        order_index:
+          type: integer
+        vote_count:
+          type: integer
+
+    PollSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        question:
+          type: string
+        is_closed:
+          type: boolean
+        created_by:
+          type: string
+          format: uuid
+        total_votes:
+          type: integer
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/PollOption'
+        user_voted_id:
+          type: string
+          format: uuid
+          nullable: true
+        creator:
+          $ref: '#/components/schemas/UserResponse'
+
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+        assigned_to:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum: [todo, in_progress, done]
+        due_date:
+          type: string
+          format: date-time
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        creator:
+          $ref: '#/components/schemas/UserResponse'
+        assignee:
+          $ref: '#/components/schemas/UserResponse'
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        data:
+          type: object
+        is_read:
+          type: boolean
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+
+    CreateWorkspaceInviteRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        role:
+          type: string
+          enum: [Admin, Member, Guest]
+        max_uses:
+          type: integer
+
+    CreateChannelRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        topic:
+          type: string
+        is_private:
+          type: boolean
+        is_announcement:
+          type: boolean
+
+    SendMessageRequest:
+      type: object
+      properties:
+        content:
+          type: string
+        parent_id:
+          type: string
+          format: uuid
+        attachment_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    UpdateMessageRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+
+    CreateDMRequest:
+      type: object
+      required: [target_user_ids]
+      properties:
+        target_user_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        name:
+          type: string
+
+    AddReactionRequest:
+      type: object
+      required: [emoji]
+      properties:
+        emoji:
+          type: string
+
+    CreatePollRequest:
+      type: object
+      required: [question, options]
+      properties:
+        question:
+          type: string
+        options:
+          type: array
+          items:
+            type: string
+        channel_id:
+          type: string
+          format: uuid
+        dm_group_id:
+          type: string
+          format: uuid
+        message_id:
+          type: string
+          format: uuid
+
+    VotePollRequest:
+      type: object
+      required: [option_id]
+      properties:
+        option_id:
+          type: string
+          format: uuid
+
+    CreateTaskRequest:
+      type: object
+      required: [workspace_id, title]
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        message_id:
+          type: string
+          format: uuid
+        assigned_to:
+          type: string
+          format: uuid
+        due_date:
+          type: string
+          format: date-time
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        assigned_to:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [todo, in_progress, done]
+        due_date:
+          type: string
+          format: date-time
+
+    PaginatedMessagesResponse:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        next_cursor:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+
+paths:
+  /auth/register:
+    post:
+      summary: Register new user
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      summary: Login user
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Tokens rotated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Token expired or invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      summary: Logout and revoke refresh token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Successfully logged out
+
+  /auth/me:
+    get:
+      summary: Get current authenticated user profile
+      tags: [Auth]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current authenticated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+    patch:
+      summary: Update profile or presence status
+      tags: [Auth]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+
+
+  /auth/change-password:
+    post:
+      summary: Change password for currently authenticated user
+      tags: [Auth]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+      responses:
+        '200':
+          description: Password changed successfully
+
+  /admin/members:
+    get:
+      summary: List workspace members with search, filters, and cursor pagination
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Workspace-ID
+          in: header
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [Owner, Admin, Member, Guest]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [online, away, dnd, offline]
+        - name: account_state
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended, deactivated]
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Members list
+        '403':
+          description: Forbidden (insufficient role)
+    post:
+      summary: Add a new member to workspace
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, full_name]
+              properties:
+                email: { type: string, format: email }
+                full_name: { type: string }
+                display_name: { type: string }
+                role: { type: string, enum: [Owner, Admin, Member, Guest] }
+                department: { type: string }
+                password: { type: string }
+                must_change_password: { type: boolean }
+      responses:
+        '201':
+          description: Member created successfully
+
+  /admin/members/{id}:
+    get:
+      summary: Get member details
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Member details
+    patch:
+      summary: Update member details, role, or account state
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name: { type: string }
+                display_name: { type: string }
+                email: { type: string }
+                department: { type: string }
+                role: { type: string, enum: [Owner, Admin, Member, Guest] }
+                account_state: { type: string, enum: [active, suspended, deactivated] }
+      responses:
+        '200':
+          description: Member updated
+    delete:
+      summary: Deactivate or permanently delete member
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [admin_password]
+              properties:
+                admin_password: { type: string }
+                permanent: { type: boolean }
+                delete_messages: { type: boolean }
+                confirm_text: { type: string }
+      responses:
+        '200':
+          description: Member removed
+
+  /admin/members/{id}/reset-password:
+    post:
+      summary: Reset user password (requires admin re-auth)
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [admin_password]
+              properties:
+                admin_password: { type: string }
+                temporary_password: { type: string }
+                must_change_password: { type: boolean }
+                force_logout: { type: boolean }
+      responses:
+        '200':
+          description: Temporary password returned
+
+  /admin/members/{id}/force-logout:
+    post:
+      summary: Force logout of all user devices
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [admin_password]
+              properties:
+                admin_password: { type: string }
+      responses:
+        '200':
+          description: User sessions revoked
+
+  /admin/members/import:
+    post:
+      summary: Bulk import members from CSV
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Validation and import report
+
+  /admin/channels:
+    get:
+      summary: List all channels in workspace
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: type
+          in: query
+          schema: { type: string, enum: [public, private, announcement] }
+        - name: is_archived
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Channel list
+    post:
+      summary: Create channel or group
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                topic: { type: string }
+                is_private: { type: boolean }
+                is_announcement: { type: boolean }
+                initial_member_ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201':
+          description: Channel created
+
+  /admin/channels/{id}:
+    get:
+      summary: Get channel details with members
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Channel details
+    patch:
+      summary: Update channel name, topic, or archive
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Channel updated
+    delete:
+      summary: Archive or delete channel
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Channel archived or deleted
+
+  /admin/channels/{id}/members:
+    post:
+      summary: Add members to channel
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_ids]
+              properties:
+                user_ids:
+                  type: array
+                  items: { type: string }
+                role: { type: string, enum: [Admin, Member] }
+      responses:
+        '200':
+          description: Members added
+    delete:
+      summary: Remove member from channel
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: user_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Member removed
+
+  /admin/settings:
+    get:
+      summary: Get workspace security and password policy settings
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Settings
+    patch:
+      summary: Update workspace security and password policy settings
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                min_password_length: { type: integer }
+                require_special_char: { type: boolean }
+                require_number: { type: boolean }
+                password_expiry_days: { type: integer }
+                max_login_attempts: { type: integer }
+                lockout_duration_mins: { type: integer }
+                enforce_2fa: { type: boolean }
+                session_timeout_mins: { type: integer }
+      responses:
+        '200':
+          description: Settings updated
+
+  /admin/security/emergency-logout:
+    post:
+      summary: Revoke all workspace sessions and refresh tokens
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [admin_password]
+              properties:
+                admin_password: { type: string }
+      responses:
+        '200':
+          description: Emergency logout executed
+
+  /admin/audit-logs:
+    get:
+      summary: Query workspace audit logs with filters and CSV export
+      tags: [Admin]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: actor_id
+          in: query
+          schema: { type: string }
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: target
+          in: query
+          schema: { type: string }
+        - name: start_date
+          in: query
+          schema: { type: string, format: date-time }
+        - name: end_date
+          in: query
+          schema: { type: string, format: date-time }
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, csv] }
+      responses:
+        '200':
+          description: Audit logs list or CSV file download
+
+  /notifications/device-token:
+    post:
+      summary: Register or upsert device push notification token
+      tags: [Notifications]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Workspace-ID
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDeviceTokenRequest'
+      responses:
+        '200':
+          description: Device token registered or updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceToken'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete a device push notification token
+      tags: [Notifications]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Token deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          description: Missing query parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /notifications:
+    get:
+      summary: List user notifications
+      tags: [Notifications]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Workspace-ID
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+
+  /notifications/{id}/read:
+    patch:
+      summary: Mark single notification as read
+      tags: [Notifications]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification marked as read
+
+  /notifications/read-all:
+    post:
+      summary: Mark all notifications as read
+      tags: [Notifications]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: X-Workspace-ID
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: All notifications marked as read
+
+  /workspaces:
+    get:
+      summary: List workspaces for the authenticated user
+      tags: [Workspaces]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Workspaces list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspaces:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Workspace'
+    post:
+      summary: Create a new workspace
+      tags: [Workspaces]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '201':
+          description: Workspace created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+
+  /workspaces/{id}:
+    get:
+      summary: Get workspace details by ID
+      tags: [Workspaces]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Workspace details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '404':
+          description: Workspace not found
+
+  /workspaces/{id}/members:
+    get:
+      summary: List members in workspace
+      tags: [Workspaces]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Workspace members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkspaceMember'
+
+  /workspaces/{id}/invites:
+    post:
+      summary: Create an invite link for workspace
+      tags: [Workspaces]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceInviteRequest'
+      responses:
+        '201':
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceInvite'
+
+  /workspaces/join/{code}:
+    post:
+      summary: Join workspace using invite code
+      tags: [Workspaces]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Joined workspace successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+
+  /workspaces/{id}/channels:
+    get:
+      summary: List active channels in workspace
+      tags: [Channels]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Channels list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channels:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Channel'
+    post:
+      summary: Create a new channel in workspace
+      tags: [Channels]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChannelRequest'
+      responses:
+        '201':
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+
+  /channels/{id}:
+    get:
+      summary: Get channel details
+      tags: [Channels]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Channel details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+
+  /channels/{id}/join:
+    post:
+      summary: Join a channel
+      tags: [Channels]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Joined channel
+
+  /channels/{id}/leave:
+    post:
+      summary: Leave a channel
+      tags: [Channels]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Left channel
+
+  /channels/{id}/messages:
+    get:
+      summary: Get paginated messages in channel with cursor pagination
+      tags: [Messages]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30
+      responses:
+        '200':
+          description: Paginated messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMessagesResponse'
+    post:
+      summary: Send a message to channel
+      tags: [Messages]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '201':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+
+  /messages/{id}:
+    patch:
+      summary: Edit message content
+      tags: [Messages]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMessageRequest'
+      responses:
+        '200':
+          description: Message updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+    delete:
+      summary: Soft-delete message
+      tags: [Messages]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Message deleted
+
+  /workspaces/{id}/dms:
+    get:
+      summary: List user direct message conversations in workspace
+      tags: [Direct Messages]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of DMs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dms:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DirectMessageGroup'
+    post:
+      summary: Start or find a direct message conversation
+      tags: [Direct Messages]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDMRequest'
+      responses:
+        '200':
+          description: DM conversation group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectMessageGroup'
+
+  /dms/{id}/messages:
+    get:
+      summary: Get paginated messages in DM conversation
+      tags: [Direct Messages]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30
+      responses:
+        '200':
+          description: Paginated messages in DM
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMessagesResponse'
+    post:
+      summary: Send a message in direct message conversation
+      tags: [Direct Messages]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '201':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+
+  /messages/{id}/reactions:
+    post:
+      summary: Add an emoji reaction to a message
+      tags: [Reactions & Pins]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddReactionRequest'
+      responses:
+        '200':
+          description: Reaction added
+    delete:
+      summary: Remove an emoji reaction from a message
+      tags: [Reactions & Pins]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: emoji
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reaction removed
+
+  /messages/{id}/pin:
+    post:
+      summary: Pin a message
+      tags: [Reactions & Pins]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Message pinned
+    delete:
+      summary: Unpin a message
+      tags: [Reactions & Pins]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Message unpinned
+
+  /channels/{id}/pins:
+    get:
+      summary: List pinned messages in channel
+      tags: [Reactions & Pins]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Pinned messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pins:
+                    type: array
+                    items:
+                      type: object
+
+  /dms/{id}/pins:
+    get:
+      summary: List pinned messages in DM
+      tags: [Reactions & Pins]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Pinned messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pins:
+                    type: array
+                    items:
+                      type: object
+
+  /channels/{id}/read:
+    post:
+      summary: Mark channel as read
+      tags: [Reactions & Pins]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Marked channel as read
+
+  /dms/{id}/read:
+    post:
+      summary: Mark DM conversation as read
+      tags: [Reactions & Pins]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Marked DM as read
+
+  /workspaces/{id}/files/upload:
+    post:
+      summary: Upload file attachment (max 25MB)
+      tags: [Files & Search]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attachment:
+                    $ref: '#/components/schemas/Attachment'
+
+  /files/{key}:
+    get:
+      summary: Download or serve file attachment
+      tags: [Files & Search]
+      security: []
+      parameters:
+
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /workspaces/{id}/search:
+    get:
+      summary: Full-text search across messages and files
+      tags: [Files & Search]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  attachments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Attachment'
+
+  /workspaces/{id}/presence:
+    get:
+      summary: Get live presence statuses of workspace members
+      tags: [Files & Search]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Presence list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  presence:
+                    type: array
+                    items:
+                      type: object
+
+  /polls:
+    post:
+      summary: Create an interactive poll with options
+      tags: [Polls]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePollRequest'
+      responses:
+        '201':
+          description: Poll created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollSummary'
+
+  /polls/{id}:
+    get:
+      summary: Get poll summary, option breakdown, and vote status
+      tags: [Polls]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Poll details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollSummary'
+
+  /polls/{id}/vote:
+    post:
+      summary: Cast or update vote on a poll option
+      tags: [Polls]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VotePollRequest'
+      responses:
+        '200':
+          description: Updated poll summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollSummary'
+
+  /polls/{id}/close:
+    post:
+      summary: Close poll and finalize voting
+      tags: [Polls]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Closed poll summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollSummary'
+
+  /tasks:
+    post:
+      summary: Create a new workspace task (optionally from message)
+      tags: [Tasks]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+
+  /workspaces/{id}/tasks:
+    get:
+      summary: List tasks in workspace with optional filters
+      tags: [Tasks]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [todo, in_progress, done]
+        - name: assigned_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Task'
+
+  /tasks/{id}:
+    patch:
+      summary: Update task details or assignment
+      tags: [Tasks]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+
+  /tasks/{id}/complete:
+    post:
+      summary: Mark task as complete
+      tags: [Tasks]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Completed task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+
+
