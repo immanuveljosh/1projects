@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lib/pq"
+
 	"officechat/backend/internal/db"
 
 	"officechat/backend/internal/models"
@@ -140,7 +142,7 @@ func (s *MessageService) SendChannelMessage(ctx context.Context, channelID, user
 			SELECT cm.user_id, $1, NOW(), 1
 			FROM channel_members cm
 			WHERE cm.channel_id = $1 AND cm.user_id != $2
-			ON CONFLICT (user_id, channel_id) DO UPDATE SET unread_count = read_states.unread_count + 1;
+			ON CONFLICT (user_id, channel_id) WHERE channel_id IS NOT NULL DO UPDATE SET unread_count = read_states.unread_count + 1;
 		`, channelID, userID)
 
 		return nil
@@ -249,22 +251,22 @@ func (s *MessageService) populateReactions(ctx context.Context, messages []model
 	msgIDs := make([]string, len(messages))
 	msgMap := make(map[string]*models.Message)
 	for i := range messages {
-		msgIDs[i] = fmt.Sprintf("'%s'", messages[i].ID)
+		msgIDs[i] = messages[i].ID
 		msgMap[messages[i].ID] = &messages[i]
 		messages[i].Reactions = []models.ReactionSummary{}
 	}
 
-	query := fmt.Sprintf(`
-		SELECT message_id, emoji, COUNT(*) as count,
+	query := `
+		SELECT message_id::text, emoji, COUNT(*) as count,
 		       ARRAY_AGG(user_id::text) as user_ids,
-		       BOOL_OR(user_id = '%s'::uuid) as has_reacted
+		       BOOL_OR(user_id::text = $2) as has_reacted
 		FROM reactions
-		WHERE message_id IN (%s)
+		WHERE message_id = ANY($1::uuid[])
 		GROUP BY message_id, emoji
 		ORDER BY emoji ASC;
-	`, currentUserID, strings.Join(msgIDs, ","))
+	`
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.db.QueryContext(ctx, query, pq.Array(msgIDs), currentUserID)
 	if err != nil {
 		return
 	}
@@ -273,13 +275,14 @@ func (s *MessageService) populateReactions(ctx context.Context, messages []model
 	for rows.Next() {
 		var msgID, emoji string
 		var count int
-		var userIDsStr string
+		var userIDs pq.StringArray
 		var hasReacted bool
-		if err := rows.Scan(&msgID, &emoji, &count, &userIDsStr, &hasReacted); err == nil {
+		if err := rows.Scan(&msgID, &emoji, &count, &userIDs, &hasReacted); err == nil {
 			if m, ok := msgMap[msgID]; ok {
 				m.Reactions = append(m.Reactions, models.ReactionSummary{
 					Emoji:      emoji,
 					Count:      count,
+					UserIDs:    []string(userIDs),
 					HasReacted: hasReacted,
 				})
 			}

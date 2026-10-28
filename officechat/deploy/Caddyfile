@@ -2,23 +2,17 @@
 	# Global runtime options
 	admin off
 
+	# Disable automatic HTTP->HTTPS redirect so Cloudflare Tunnel traffic to http://caddy:80
+	# does not trigger an infinite redirect loop at the edge (Cloudflare enforces public HTTPS).
+	auto_https disable_redirects
+
 	# Order custom rate_limit directive before basic_auth / reverse_proxy
 	order rate_limit before basic_auth
 
-	# Restrict proxy trust to private network ranges
+	# Restrict proxy trust to private network ranges (Docker edge network / cloudflared)
 	servers {
 		trusted_proxies static private_ranges
-		client_ip_headers X-Forwarded-For X-Real-IP
-	}
-}
-
-# Dedicated local healthcheck endpoint and HTTP->HTTPS redirect
-http://localhost:80, http://127.0.0.1:80 {
-	handle /healthz {
-		respond "ok" 200
-	}
-	handle {
-		redir https://{host}{uri} permanent
+		client_ip_headers Cf-Connecting-Ip X-Forwarded-For X-Real-IP
 	}
 }
 
@@ -62,15 +56,7 @@ http://localhost:80, http://127.0.0.1:80 {
 	}
 }
 
-# ==============================================================================
-# MAIN APPLICATION HOST
-# ==============================================================================
-{$DOMAIN:localhost} {
-	# TLS 1.2+ minimum, automatic internal CA or Let's Encrypt / ZeroSSL
-	tls {$TLS_MODE:internal} {
-		protocols tls1.2 tls1.3
-	}
-
+(app_routes) {
 	import security_headers
 	import rate_limiting
 
@@ -79,7 +65,7 @@ http://localhost:80, http://127.0.0.1:80 {
 		max_size 25MB
 	}
 
-	# Proxy health probe for container healthcheck
+	# Proxy health probe for container healthcheck & tunnel origin checks
 	handle /healthz {
 		respond "ok" 200
 	}
@@ -96,19 +82,23 @@ http://localhost:80, http://127.0.0.1:80 {
 			flush_interval -1
 			header_up Host {host}
 			header_up X-Real-IP {client_ip}
+			header_up X-Forwarded-Proto {header.X-Forwarded-Proto}
+			header_up CF-Connecting-IP {header.CF-Connecting-IP}
 			transport http {
 				response_header_timeout 60s
-				read_timeout 300s
-				write_timeout 300s
+				read_timeout 3600s
+				write_timeout 3600s
 			}
 		}
 	}
 
-	# Backend API Endpoints
+	# Backend API Endpoints (Auth, Chat, Polls, Tasks, Admin, File Uploads/Downloads)
 	handle /api/* {
 		reverse_proxy api:8080 {
 			header_up Host {host}
 			header_up X-Real-IP {client_ip}
+			header_up X-Forwarded-Proto {header.X-Forwarded-Proto}
+			header_up CF-Connecting-IP {header.CF-Connecting-IP}
 			transport http {
 				response_header_timeout 30s
 				read_timeout 60s
@@ -142,6 +132,25 @@ http://localhost:80, http://127.0.0.1:80 {
 		}
 		format json
 	}
+}
+
+# ==============================================================================
+# CLOUDFLARE TUNNEL & LOCAL HTTP ENTRYPOINT (Port 80 inside edge network)
+# ==============================================================================
+http://{$DOMAIN:localhost}, http://caddy:80, http://localhost:80, http://127.0.0.1:80 {
+	import app_routes
+}
+
+# ==============================================================================
+# DIRECT HTTPS ENTRYPOINT (Port 443)
+# ==============================================================================
+https://{$DOMAIN:localhost}, https://localhost:443 {
+	# TLS 1.2+ minimum, automatic internal CA or Let's Encrypt / ZeroSSL
+	tls {$TLS_MODE:internal} {
+		protocols tls1.2 tls1.3
+	}
+
+	import app_routes
 }
 
 # ==============================================================================

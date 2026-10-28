@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"officechat/backend/internal/middleware"
 	"officechat/backend/internal/models"
+	"officechat/backend/internal/tokens"
 )
 
 type mockAuthorizer struct {
@@ -144,5 +146,36 @@ func TestRequireRole(t *testing.T) {
 		if rr.Code != http.StatusForbidden {
 			t.Errorf("expected 403 for cross-workspace IDOR access, got %d", rr.Code)
 		}
+	}
+}
+
+func TestAuthenticator_HttpOnlyCookie(t *testing.T) {
+	tm := tokens.NewTokenManager("test-access-secret-32-bytes-long!!", "test-refresh-secret-32-bytes-long!", 15*time.Minute, 24*time.Hour)
+	tokenStr, _, err := tm.GenerateAccessToken("usr_cookie_1", "cookie@officechat.local", models.RoleMember)
+	if err != nil {
+		t.Fatalf("failed to generate access token: %v", err)
+	}
+
+	protected := middleware.Authenticator(tm)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uid, ok := middleware.GetUserID(r.Context())
+		if !ok || uid != "usr_cookie_1" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.AddCookie(&http.Cookie{
+		Name:     "officechat_access_token",
+		Value:    tokenStr,
+		HttpOnly: true,
+		Secure:   true,
+	})
+	rr := httptest.NewRecorder()
+	protected.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK when authenticated via HttpOnly session cookie, got %d", rr.Code)
 	}
 }

@@ -8,6 +8,12 @@
 *.pem
 *.key
 *.crt
+*.tunnel
+.cloudflared/
+**/.cloudflared/
+deploy/cloudflared/*.json
+deploy/cloudflared/*.yml
+deploy/cloudflared/*.yaml
 local.properties
 */local.properties
 **/local.properties

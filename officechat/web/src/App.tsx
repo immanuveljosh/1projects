@@ -762,19 +762,30 @@ export default function App() {
   const handleForwardMessage = useCallback((targetConv: Conversation) => {
     if (!forwardingMessage) return;
     const now = new Date();
+    const formattedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const forwardedContent = `↪️ Forwarded: ${forwardingMessage.content}`;
     const forwardedMsg: Message = {
       id: 'm_' + now.getTime(),
       sender: currentUser,
-      content: `↪️ Forwarded: ${forwardingMessage.content}`,
-      timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      content: forwardedContent,
+      timestamp: formattedTime,
       rawDate: 'Today',
       reactions: [],
       status: 'delivered'
     };
-    setMessages(prev => [...prev, forwardedMsg]);
+    setConversations(prev =>
+      prev.map(c =>
+        c.id === targetConv.id
+          ? { ...c, lastMessage: forwardedContent, lastTime: formattedTime }
+          : c
+      )
+    );
+    if (targetConv.id === activeConversationId) {
+      setMessages(prev => [...prev, forwardedMsg]);
+    }
     setForwardingMessage(null);
     addToast(`Message forwarded to ${targetConv.name}`, 'success');
-  }, [forwardingMessage, currentUser, addToast]);
+  }, [forwardingMessage, currentUser, activeConversationId, addToast]);
 
   /* Send thread reply */
   const handleSendThreadReply = () => {
@@ -2095,6 +2106,14 @@ export default function App() {
                               style={{ padding: '3px 5px', color: 'var(--text-secondary)' }}
                             >
                               <CornerUpLeft size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveThreadMessage(msg)}
+                              data-tooltip="Reply in Thread"
+                              style={{ padding: '3px 5px', color: 'var(--text-secondary)' }}
+                            >
+                              <MessageSquare size={13} />
                             </button>
                             <button
                               type="button"

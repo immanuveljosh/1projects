@@ -305,7 +305,7 @@ func (h *ReactionPinReadHandler) HandleMarkChannelRead(w http.ResponseWriter, r 
 	query := `
 		INSERT INTO read_states (user_id, channel_id, last_read_at, unread_count)
 		VALUES ($1, $2, NOW(), 0)
-		ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_at = NOW(), unread_count = 0;
+		ON CONFLICT (user_id, channel_id) WHERE channel_id IS NOT NULL DO UPDATE SET last_read_at = NOW(), unread_count = 0;
 	`
 	_, _ = h.db.ExecContext(r.Context(), query, userID, channelID)
 
@@ -331,7 +331,7 @@ func (h *ReactionPinReadHandler) HandleMarkDMRead(w http.ResponseWriter, r *http
 	query := `
 		INSERT INTO read_states (user_id, dm_group_id, last_read_at, unread_count)
 		VALUES ($1, $2, NOW(), 0)
-		ON CONFLICT (user_id, dm_group_id) DO UPDATE SET last_read_at = NOW(), unread_count = 0;
+		ON CONFLICT (user_id, dm_group_id) WHERE dm_group_id IS NOT NULL DO UPDATE SET last_read_at = NOW(), unread_count = 0;
 	`
 	_, _ = h.db.ExecContext(r.Context(), query, userID, dmGroupID)
 

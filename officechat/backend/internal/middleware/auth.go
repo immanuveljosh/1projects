@@ -27,23 +27,32 @@ type DBQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// Authenticator validates Bearer tokens on protected routes
+// extractBearerOrCookieToken retrieves the access token from Authorization header or HttpOnly session cookie
+func extractBearerOrCookieToken(r *http.Request) (string, bool, string) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+			return "", false, "Invalid authorization header format. Expected 'Bearer <token>'"
+		}
+		return strings.TrimSpace(parts[1]), true, ""
+	}
+	if cookie, err := r.Cookie("officechat_access_token"); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		return strings.TrimSpace(cookie.Value), true, ""
+	}
+	return "", false, "Missing authorization header"
+}
+
+// Authenticator validates Bearer tokens or HttpOnly session cookies on protected routes
 func Authenticator(tm *tokens.TokenManager) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				utils.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing authorization header")
+			tokenStr, ok, errMsg := extractBearerOrCookieToken(r)
+			if !ok {
+				utils.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", errMsg)
 				return
 			}
 
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
-				utils.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid authorization header format. Expected 'Bearer <token>'")
-				return
-			}
-
-			tokenStr := strings.TrimSpace(parts[1])
 			claims, err := tm.ValidateAccessToken(tokenStr)
 			if err != nil {
 				utils.Error(w, http.StatusUnauthorized, "INVALID_TOKEN", "Authentication token is invalid or expired")
@@ -59,21 +68,16 @@ func Authenticator(tm *tokens.TokenManager) func(http.Handler) http.Handler {
 	}
 }
 
-// OptionalAuthenticator extracts user if Bearer token present, but does not block if missing
+// OptionalAuthenticator extracts user if Bearer token or session cookie is present, but does not block if missing
 func OptionalAuthenticator(tm *tokens.TokenManager) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader != "" {
-				parts := strings.SplitN(authHeader, " ", 2)
-				if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
-					tokenStr := strings.TrimSpace(parts[1])
-					if claims, err := tm.ValidateAccessToken(tokenStr); err == nil {
-						ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
-						ctx = context.WithValue(ctx, UserEmailKey, claims.Email)
-						ctx = context.WithValue(ctx, UserRoleKey, claims.Role)
-						r = r.WithContext(ctx)
-					}
+			if tokenStr, ok, _ := extractBearerOrCookieToken(r); ok {
+				if claims, err := tm.ValidateAccessToken(tokenStr); err == nil {
+					ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
+					ctx = context.WithValue(ctx, UserEmailKey, claims.Email)
+					ctx = context.WithValue(ctx, UserRoleKey, claims.Role)
+					r = r.WithContext(ctx)
 				}
 			}
 			next.ServeHTTP(w, r)

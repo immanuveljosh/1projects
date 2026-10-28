@@ -460,21 +460,43 @@ func (s *Service) AddChannelMembers(ctx context.Context, actorID, workspaceID, c
 	}
 
 	addedCount := 0
-	for _, uID := range req.UserIDs {
-		uID = strings.TrimSpace(uID)
-		if uID == "" {
+	for _, identifier := range req.UserIDs {
+		identifier = strings.TrimSpace(identifier)
+		if identifier == "" {
 			continue
 		}
+
+		var resolvedUserID string
+		err := s.db.QueryRowContext(ctx, `
+			SELECT id::text FROM users
+			WHERE (id::text = $1 OR LOWER(email) = LOWER($1)) AND deleted_at IS NULL
+			LIMIT 1
+		`, identifier).Scan(&resolvedUserID)
+		if err != nil || resolvedUserID == "" {
+			continue
+		}
+
+		// Ensure the user is also in workspace_members before adding to channel
+		_, _ = s.db.ExecContext(ctx, `
+			INSERT INTO workspace_members (workspace_id, user_id, role, account_state, joined_at)
+			VALUES ($1, $2, 'Member', 'active', NOW())
+			ON CONFLICT (workspace_id, user_id) DO NOTHING
+		`, workspaceID, resolvedUserID)
+
 		res, err := s.db.ExecContext(ctx, `
 			INSERT INTO channel_members (channel_id, user_id, role, joined_at)
 			VALUES ($1, $2, $3, NOW())
 			ON CONFLICT DO NOTHING
-		`, channelID, uID, role)
+		`, channelID, resolvedUserID, role)
 		if err == nil {
 			if n, _ := res.RowsAffected(); n > 0 {
 				addedCount++
 			}
 		}
+	}
+
+	if len(req.UserIDs) > 0 && addedCount == 0 {
+		return ErrMemberNotFound
 	}
 
 	_ = audit.Record(ctx, s.db, audit.LogEntry{

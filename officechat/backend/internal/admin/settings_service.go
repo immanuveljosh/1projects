@@ -280,7 +280,7 @@ func buildAuditSummary(action, actorName string, details, beforeState, afterStat
 		}
 		return fmt.Sprintf("%s removed %s from workspace", actor, targetName)
 
-	case "member.bulk_import":
+	case "member.bulk_import", "member.import_csv":
 		total := details["total"]
 		succ := details["succeeded"]
 		return fmt.Sprintf("%s imported members via CSV (%v of %v succeeded)", actor, succ, total)

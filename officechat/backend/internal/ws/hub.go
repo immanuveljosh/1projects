@@ -100,16 +100,28 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 
 		case message := <-h.broadcast:
-			h.mu.RLock()
+			h.mu.Lock()
 			for client := range h.clients {
 				select {
 				case client.send <- message:
 				default:
 					close(client.send)
 					delete(h.clients, client)
+					if client.userID != "" && h.userConns[client.userID] != nil {
+						delete(h.userConns[client.userID], client)
+						if len(h.userConns[client.userID]) == 0 {
+							delete(h.userConns, client.userID)
+						}
+					}
+					if client.workspaceID != "" && h.wsConns[client.workspaceID] != nil {
+						delete(h.wsConns[client.workspaceID], client)
+						if len(h.wsConns[client.workspaceID]) == 0 {
+							delete(h.wsConns, client.workspaceID)
+						}
+					}
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
@@ -241,6 +253,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if tokenStr == "" {
 		tokenStr = r.Header.Get("Sec-WebSocket-Protocol")
 	}
+	if tokenStr == "" {
+		if cookie, err := r.Cookie("officechat_access_token"); err == nil {
+			tokenStr = cookie.Value
+		}
+	}
 
 	var userID, role string
 	if tokenStr != "" {
@@ -248,6 +265,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			userID = claims.UserID
 			role = claims.Role
 		}
+	}
+	if userID == "" {
+		http.Error(w, "Unauthorized WebSocket connection", http.StatusUnauthorized)
+		return
 	}
 
 	workspaceID := r.URL.Query().Get("workspace_id")

@@ -275,7 +275,7 @@ func (s *DMService) SendDMMessage(ctx context.Context, dmGroupID, userID string,
 			SELECT dmm.user_id, $1, NOW(), 1
 			FROM direct_message_members dmm
 			WHERE dmm.dm_group_id = $1 AND dmm.user_id != $2
-			ON CONFLICT (user_id, dm_group_id) DO UPDATE SET unread_count = read_states.unread_count + 1;
+			ON CONFLICT (user_id, dm_group_id) WHERE dm_group_id IS NOT NULL DO UPDATE SET unread_count = read_states.unread_count + 1;
 		`, dmGroupID, userID)
 
 		return nil
