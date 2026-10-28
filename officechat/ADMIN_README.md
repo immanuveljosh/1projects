@@ -44,7 +44,7 @@ $$\text{Owner} > \text{Admin} > \text{Member} > \text{Guest}$$
 
 ---
 
-## 4. Required Changes for Web & Mobile Clients
+## 4. Required Changes for Web Client
 
 ### A. Force-Change-Password Screen
 When a member is created by an admin or has their password reset, `users.must_change_password` is set to `true`.
@@ -53,9 +53,6 @@ When a member is created by an admin or has their password reset, `users.must_ch
   - If `true`, render a modal or route (`/change-password`) prompting the user to enter their temporary password and select a new password.
   - Call `POST /api/v1/auth/change-password` with `{ current_password, new_password }`.
   - Upon success, clear `must_change_password` and transition to the chat workspace.
-- **Mobile App (Flutter / Android)**:
-  - Intercept the login response. If `user.must_change_password == true`, push `ChangePasswordScreen` on top of Navigator.
-  - Disallow popping or navigating away until `POST /api/v1/auth/change-password` returns `200 OK`.
 
 ### B. Suspended / Deactivated User Handling
 When an admin suspends, deactivates, or forces logout of a user:
@@ -63,11 +60,11 @@ When an admin suspends, deactivates, or forces logout of a user:
    - The backend pushes `SESSION_TERMINATED` via WebSocket (`/api/v1/ws`).
    - Listen for `{ type: "SESSION_TERMINATED", payload: { reason: "..." } }`.
    - On receipt:
-     - Clear local `officechat_access_token` and `officechat_refresh_token` from storage (`localStorage` / `FlutterSecureStorage`).
+     - Clear local `officechat_access_token` and `officechat_refresh_token` from storage (`localStorage`).
      - Display an alert: *"Your session has been terminated by an administrator."*
      - Redirect to the login screen.
 2. **HTTP 403 Interceptor**:
-   - Both Axios/fetch in web and Dio/http in mobile should inspect error code `ACCOUNT_SUSPENDED`.
+   - Axios/fetch in web should inspect error code `ACCOUNT_SUSPENDED`.
    - Clear credentials and immediately route to the login screen.
 
 ---

@@ -3,7 +3,6 @@ info:
   title: OfficeChat API
   description: >
     Production REST & WebSocket API specification for OfficeChat.
-    Used by both the Web application and the mobile (Flutter Android) application.
   version: 1.0.0
 servers:
   - url: http://localhost:8080/api/v1

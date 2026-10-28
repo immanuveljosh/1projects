@@ -38,6 +38,3 @@ dev-backend:
 dev-web:
 	cd web && npm run dev
 
-generate-mobile-api:
-	cd mobile && flutter pub get && dart run build_runner build --delete-conflicting-outputs
-

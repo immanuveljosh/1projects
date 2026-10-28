@@ -608,7 +608,7 @@ export default function App() {
     },
     {
       id: 't3',
-      title: 'Schedule Flutter Android SDK integration session',
+      title: 'Schedule real-time messaging audit and review',
       status: 'todo',
       assignedTo: 'Admin User',
       dueDate: 'Tomorrow',

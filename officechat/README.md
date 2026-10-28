@@ -1,6 +1,6 @@
 # OfficeChat 🏢💬
 
-OfficeChat is a modern, full-stack, enterprise-grade office team-chat web application inspired by Slack, Flock, and Discord. It is engineered with a decoupled Go REST & WebSocket backend designed to power both web and mobile (Flutter Android) clients seamlessly.
+OfficeChat is a modern, full-stack, enterprise-grade office team-chat web application inspired by Slack, Flock, and Discord. It is engineered with a decoupled Go REST & WebSocket backend and a responsive modern web client.
 
 ---
 
@@ -22,7 +22,6 @@ OfficeChat is a modern, full-stack, enterprise-grade office team-chat web applic
 - **DevOps & Architecture**:
   - **Docker Compose**: Orchestrated `postgres`, `redis`, `minio`, `api`, and `web`
   - **OpenAPI 3.0**: Fully documented API contracts (`openapi.yaml`)
-  - **Mobile Ready**: `MOBILE_INTEGRATION.md` detailing contracts for the future Flutter Android app
 
 ---
 
@@ -118,7 +117,6 @@ npm run dev
 │   └── Dockerfile
 ├── docker-compose.yml             # Orchestration for all services
 ├── Makefile                       # Developer shortcuts
-├── MOBILE_INTEGRATION.md          # Mobile integration contracts (Flutter)
 ├── .env.example                   # Environment configuration template
 └── README.md
 ```
@@ -134,8 +132,3 @@ make test-backend
 # Frontend unit tests
 make test-web
 ```
-
----
-
-## 📱 Mobile Integration (Flutter)
-Check out [`MOBILE_INTEGRATION.md`](./MOBILE_INTEGRATION.md) for full details on authentication interceptors, WebSocket event streams, and typed payload schemas.
