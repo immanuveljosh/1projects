@@ -78,34 +78,24 @@ function request(method, path, body = null, headers = {}) {
 
 function connectWs(token, workspaceId) {
   return new Promise((resolve, reject) => {
-    const url = new URL(`/api/v1/ws?workspace_id=${workspaceId}&token=${token}`, BASE_URL);
-    const isHttps = url.protocol === 'https:';
-    const lib = isHttps ? https : http;
+    const wsBase = BASE_URL.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:');
+    const wsUrl = `${wsBase}/api/v1/ws?workspace_id=${workspaceId}&token=${token}`;
+    const ws = new WebSocket(wsUrl);
 
-    const key = Buffer.from(Math.random().toString()).toString('base64');
-    const req = lib.request({
-      protocol: url.protocol,
-      hostname: url.hostname,
-      port: url.port || (isHttps ? 443 : 80),
-      path: url.pathname + url.search,
-      headers: {
-        'Connection': 'Upgrade',
-        'Upgrade': 'websocket',
-        'Sec-WebSocket-Key': key,
-        'Sec-WebSocket-Version': '13',
-      },
-      timeout: 8000,
-    });
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error('WebSocket connection timed out'));
+    }, 8000);
 
-    req.on('upgrade', (res, socket) => {
-      resolve({ socket, res });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('WebSocket connection timeout'));
-    });
-    req.end();
+    ws.onopen = () => {
+      clearTimeout(timer);
+      resolve(ws);
+    };
+
+    ws.onerror = (err) => {
+      clearTimeout(timer);
+      reject(new Error(`WebSocket error: ${err.message || 'connection failed'}`));
+    };
   });
 }
 
@@ -172,28 +162,17 @@ async function run() {
 
     // 4. WebSocket connection for User B to receive messages
     const wsB = await connectWs(tokenB, WORKSPACE_ID);
-    assert('User B WebSocket Connected', !!wsB.socket);
+    assert('User B WebSocket Connected', !!wsB);
 
     let receivedMsg = null;
-    wsB.socket.on('data', (buf) => {
-      // Very basic frame unmasking for unmasked server-to-client text frames
-      // Opcode 1 = text frame: 0x81
-      if (buf[0] === 0x81) {
-        let len = buf[1] & 0x7f;
-        let offset = 2;
-        if (len === 126) {
-          len = buf.readUInt16BE(2);
-          offset = 4;
+    wsB.onmessage = (event) => {
+      try {
+        const evt = JSON.parse(event.data);
+        if (evt.type === 'message.new') {
+          receivedMsg = evt.payload;
         }
-        const text = buf.slice(offset, offset + len).toString('utf8');
-        try {
-          const evt = JSON.parse(text);
-          if (evt.type === 'message.new') {
-            receivedMsg = evt.payload;
-          }
-        } catch {}
-      }
-    });
+      } catch {}
+    };
 
     // 5. User A sends message in the channel
     const msgRes = await request(
@@ -356,7 +335,7 @@ async function run() {
     assert('Profile & Custom Status Update', profileRes.status === 200, JSON.stringify(profileRes.data));
 
     // Cleanup WS
-    if (wsB.socket) wsB.socket.destroy();
+    if (wsB) wsB.close();
 
   } catch (err) {
     console.error('Test execution error:', err);
