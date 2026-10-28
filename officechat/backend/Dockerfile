@@ -19,7 +19,8 @@ ENV CGO_ENABLED=0 \
     GOOS=linux \
     GOARCH=amd64
 
-RUN go build -trimpath -ldflags="-w -s -extldflags '-static'" -o /out/officechat-api ./cmd/api && \
+RUN mkdir -p /out/uploads && \
+    go build -trimpath -ldflags="-w -s -extldflags '-static'" -o /out/officechat-api ./cmd/api && \
     go build -trimpath -ldflags="-w -s -extldflags '-static'" -o /out/officechat-migrate ./cmd/migrate && \
     go build -trimpath -ldflags="-w -s -extldflags '-static'" -o /out/healthcheck ./cmd/healthcheck
 
@@ -32,11 +33,12 @@ WORKDIR /app
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
-# Copy compiled static binaries and migrations
+# Copy compiled static binaries, migrations, and writable uploads directory
 COPY --from=builder --chown=65532:65532 /out/officechat-api /app/officechat-api
 COPY --from=builder --chown=65532:65532 /out/officechat-migrate /app/officechat-migrate
 COPY --from=builder --chown=65532:65532 /out/healthcheck /app/healthcheck
 COPY --from=builder --chown=65532:65532 /src/migrations /app/migrations
+COPY --from=builder --chown=65532:65532 /out/uploads /app/uploads
 
 # Run as non-root user (UID 65532 is distroless 'nonroot')
 USER 65532:65532

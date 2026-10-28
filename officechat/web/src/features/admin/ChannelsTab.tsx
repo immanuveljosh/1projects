@@ -55,75 +55,11 @@ export const ChannelsTab: React.FC<ChannelsTabProps> = ({ onToast }) => {
       setChannels(res.channels || []);
     } catch (err) {
       console.error('Failed to load channels:', err);
-      // Fallback preview seed
-      if (channels.length === 0) {
-        setChannels([
-          {
-            id: 'c_general',
-            workspace_id: 'ws_default',
-            name: 'general',
-            description: 'Company-wide announcements and general workplace chatter',
-            topic: 'All-Hands sync agenda vote is live',
-            is_private: false,
-            is_archived: false,
-            is_announcement: false,
-            member_count: 42,
-            created_by: 'system',
-            creator_name: 'Administrator',
-            created_at: new Date(Date.now() - 86400000 * 30).toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          {
-            id: 'c_announcements',
-            workspace_id: 'ws_default',
-            name: 'announcements',
-            description: 'Official corporate leadership updates',
-            topic: 'Quarterly OKRs & Holidays calendar',
-            is_private: false,
-            is_archived: false,
-            is_announcement: true,
-            member_count: 42,
-            created_by: 'system',
-            creator_name: 'Administrator',
-            created_at: new Date(Date.now() - 86400000 * 25).toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          {
-            id: 'c_dev_team',
-            workspace_id: 'ws_default',
-            name: 'dev-team',
-            description: 'Backend & Frontend engineering discussion',
-            topic: 'Sub-5ms PostgreSQL connection pooling',
-            is_private: true,
-            is_archived: false,
-            is_announcement: false,
-            member_count: 12,
-            created_by: 'u_sarah',
-            creator_name: 'Sarah Connor',
-            created_at: new Date(Date.now() - 86400000 * 15).toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          {
-            id: 'c_legacy_slack',
-            workspace_id: 'ws_default',
-            name: 'legacy-slack-archive',
-            description: 'Archived messages from previous system',
-            topic: 'Read-only archive',
-            is_private: false,
-            is_archived: true,
-            is_announcement: false,
-            member_count: 8,
-            created_by: 'system',
-            creator_name: 'Administrator',
-            created_at: new Date(Date.now() - 86400000 * 60).toISOString(),
-            updated_at: new Date().toISOString(),
-          }
-        ]);
-      }
+      setChannels([]);
     } finally {
       setLoading(false);
     }
-  }, [search, typeFilter, archivedFilter, channels.length]);
+  }, [search, typeFilter, archivedFilter]);
 
   useEffect(() => {
     let ignore = false;

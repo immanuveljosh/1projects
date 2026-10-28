@@ -59,7 +59,8 @@ func Record(ctx context.Context, db DBExecutor, entry LogEntry) error {
 		) VALUES (
 			$1, NULLIF($2, '')::uuid, $3, $4,
 			CASE WHEN $5 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN $5::uuid ELSE NULL END,
-			$4, NULLIF($5, ''), 
+			$4,
+			CASE WHEN $5 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN $5::uuid ELSE NULL END,
 			CASE WHEN $6::text IS NULL THEN NULL ELSE $6::jsonb END,
 			CASE WHEN $7::text IS NULL THEN NULL ELSE $7::jsonb END,
 			$8::jsonb,

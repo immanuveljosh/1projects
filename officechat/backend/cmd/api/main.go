@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"officechat/backend/internal/models"
 	"officechat/backend/internal/notifications"
 	"officechat/backend/internal/tokens"
+	"officechat/backend/internal/tunnel"
 	"officechat/backend/internal/utils"
 	"officechat/backend/internal/ws"
 )
@@ -77,9 +79,25 @@ func main() {
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(60 * time.Second))
 
-	// CORS
+	// CORS (supports dynamic Cloudflare Quick Tunnel *.trycloudflare.com subdomains and local origins)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   cfg.CORSAllowedOrigins,
+		AllowedOrigins: cfg.CORSAllowedOrigins,
+		AllowOriginFunc: func(r *http.Request, origin string) bool {
+			orig := strings.ToLower(strings.TrimSpace(origin))
+			if strings.HasPrefix(orig, "https://") && strings.HasSuffix(orig, ".trycloudflare.com") {
+				return true
+			}
+			if orig == "http://localhost" || strings.HasPrefix(orig, "http://localhost:") ||
+				orig == "http://127.0.0.1" || strings.HasPrefix(orig, "http://127.0.0.1:") {
+				return true
+			}
+			for _, allowed := range cfg.CORSAllowedOrigins {
+				if strings.EqualFold(strings.TrimSpace(allowed), orig) {
+					return true
+				}
+			}
+			return false
+		},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Workspace-ID"},
 		ExposedHeaders:   []string{"Link", "Content-Length"},
@@ -87,8 +105,8 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// Rate Limiting (100 requests per minute per IP)
-	rateLimiter := middleware.NewRateLimiter(100, time.Minute)
+	// Rate Limiting (300 requests per minute per authenticated user / unauthenticated IP)
+	rateLimiter := middleware.NewRateLimiter(300, time.Minute)
 	r.Use(rateLimiter.Middleware())
 
 	// Health Check Endpoints
@@ -145,9 +163,17 @@ func main() {
 
 	// Realtime WebSocket Event Hub
 	hub := ws.NewHub(tm)
+	hub.SetScopeAuthorizer(ws.NewSQLScopeAuthorizer(database.DB))
 	go hub.Run()
 	r.Get("/api/v1/ws", hub.ServeHTTP)
 	r.Get("/ws", hub.ServeHTTP)
+
+	// Automatic Cloudflare Quick Tunnel URL Watcher & Permanent Discovery Publisher
+	tunnelWatcher := tunnel.NewWatcher(func(cfg tunnel.ConfigPayload) {
+		hub.BroadcastToAll("tunnel.url_updated", cfg)
+	})
+	go tunnelWatcher.Start(context.Background(), 5*time.Second)
+	r.Get("/api/v1/tunnel-config", tunnelWatcher.HandleGetTunnelConfig)
 
 	// Authorizer for RBAC middleware
 	authorizer := middleware.NewSQLMemberAuthorizer(database.DB)

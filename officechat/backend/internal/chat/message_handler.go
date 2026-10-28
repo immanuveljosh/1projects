@@ -29,8 +29,37 @@ func (h *MessageHandler) RegisterRoutes(r chi.Router) {
 		mr.Get("/channels/{id}/messages", h.HandleListChannelMessages)
 		mr.Post("/channels/{id}/messages", h.HandleSendChannelMessage)
 
+		mr.Get("/messages/{id}/thread", h.HandleListThreadMessages)
 		mr.Patch("/messages/{id}", h.HandleUpdateMessage)
 		mr.Delete("/messages/{id}", h.HandleDeleteMessage)
+	})
+}
+
+func (h *MessageHandler) HandleListThreadMessages(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok || userID == "" {
+		utils.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	messageID := chi.URLParam(r, "id")
+	replies, err := h.service.ListThreadMessages(r.Context(), messageID, userID)
+	if err != nil {
+		if errors.Is(err, ErrMessageNotFound) || errors.Is(err, ErrChannelNotFound) || errors.Is(err, ErrDMNotFound) {
+			utils.Error(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+			return
+		}
+		if errors.Is(err, ErrChannelForbidden) || errors.Is(err, ErrDMForbidden) {
+			utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
+		utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve thread messages")
+		return
+	}
+
+	utils.JSON(w, http.StatusOK, map[string]any{
+		"parent_id": messageID,
+		"messages":  replies,
 	})
 }
 
@@ -52,6 +81,14 @@ func (h *MessageHandler) HandleListChannelMessages(w http.ResponseWriter, r *htt
 
 	res, err := h.service.ListChannelMessages(r.Context(), channelID, userID, cursor, limit)
 	if err != nil {
+		if errors.Is(err, ErrChannelNotFound) {
+			utils.Error(w, http.StatusNotFound, "NOT_FOUND", "Channel not found")
+			return
+		}
+		if errors.Is(err, ErrChannelForbidden) {
+			utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
 		utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve messages")
 		return
 	}
@@ -75,6 +112,14 @@ func (h *MessageHandler) HandleSendChannelMessage(w http.ResponseWriter, r *http
 
 	msg, err := h.service.SendChannelMessage(r.Context(), channelID, userID, req)
 	if err != nil {
+		if errors.Is(err, ErrChannelNotFound) {
+			utils.Error(w, http.StatusNotFound, "NOT_FOUND", "Channel not found")
+			return
+		}
+		if errors.Is(err, ErrChannelForbidden) {
+			utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
 		utils.Error(w, http.StatusBadRequest, "VALIDATION_FAILED", err.Error())
 		return
 	}

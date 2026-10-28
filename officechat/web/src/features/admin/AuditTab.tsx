@@ -48,72 +48,12 @@ export const AuditTab: React.FC<AuditTabProps> = ({ onToast }) => {
       setTotalCount(res.total_count);
     } catch (err) {
       console.error('Failed to load audit logs:', err);
-      // Fallback sample audit logs for preview
-      if (logs.length === 0) {
-        setLogs([
-          {
-            id: 'al_1',
-            workspace_id: 'ws_default',
-            actor_id: 'u_admin',
-            actor_name: 'Administrator',
-            actor_email: 'admin@officechat.local',
-            action: 'member.update',
-            target_type: 'user',
-            target_id: 'u_elena',
-            ip_address: '192.168.1.10',
-            user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            created_at: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-            summary: "Administrator changed Elena Rostova's role from Member to Admin",
-          },
-          {
-            id: 'al_2',
-            workspace_id: 'ws_default',
-            actor_id: 'u_admin',
-            actor_name: 'Administrator',
-            actor_email: 'admin@officechat.local',
-            action: 'member.create',
-            target_type: 'user',
-            target_id: 'u_alex',
-            ip_address: '192.168.1.10',
-            user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            created_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-            summary: 'Administrator created new member alex.chen@officechat.local with role Member',
-          },
-          {
-            id: 'al_3',
-            workspace_id: 'ws_default',
-            actor_id: 'u_admin',
-            actor_name: 'Administrator',
-            actor_email: 'admin@officechat.local',
-            action: 'channel.create',
-            target_type: 'channel',
-            target_id: 'c_dev_team',
-            ip_address: '192.168.1.10',
-            user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-            summary: 'Administrator created private channel #dev-team',
-          },
-          {
-            id: 'al_4',
-            workspace_id: 'ws_default',
-            actor_id: 'u_admin',
-            actor_name: 'Administrator',
-            actor_email: 'admin@officechat.local',
-            action: 'settings.update',
-            target_type: 'workspace_settings',
-            target_id: 'ws_default',
-            ip_address: '192.168.1.10',
-            user_agent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            created_at: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-            summary: 'Administrator updated workspace security and password policy settings',
-          }
-        ]);
-        setTotalCount(4);
-      }
+      setLogs([]);
+      setTotalCount(0);
     } finally {
       setLoading(false);
     }
-  }, [actionSearch, targetSearch, startDate, endDate, logs.length]);
+  }, [actionSearch, targetSearch, startDate, endDate]);
 
   useEffect(() => {
     let ignore = false;

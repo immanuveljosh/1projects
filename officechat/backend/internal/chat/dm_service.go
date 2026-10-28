@@ -13,7 +13,8 @@ import (
 )
 
 var (
-	ErrDMNotFound = errors.New("direct message conversation not found")
+	ErrDMNotFound  = errors.New("direct message conversation not found")
+	ErrDMForbidden = errors.New("access denied: you are not a participant in this direct message")
 )
 
 type DMService struct {
@@ -49,6 +50,9 @@ func (s *DMService) ListUserDMs(ctx context.Context, workspaceID, userID string)
 		}
 		groups = append(groups, g)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating user DMs: %w", err)
+	}
 
 	// For each group, load other members
 	for i := range groups {
@@ -72,6 +76,7 @@ func (s *DMService) ListUserDMs(ctx context.Context, workspaceID, userID string)
 					members = append(members, u)
 				}
 			}
+			_ = memberRows.Err()
 			memberRows.Close()
 			groups[i].Members = members
 		}
@@ -176,6 +181,13 @@ func (s *DMService) GetOrCreateDM(ctx context.Context, workspaceID, userID strin
 
 // ListDMMessages fetches messages in a DM conversation with cursor pagination
 func (s *DMService) ListDMMessages(ctx context.Context, dmGroupID, currentUserID, cursor string, limit int) (*PaginatedMessages, error) {
+	var isMember bool
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM direct_message_members WHERE dm_group_id = $1 AND user_id = $2)
+	`, dmGroupID, currentUserID).Scan(&isMember); err != nil || !isMember {
+		return nil, ErrDMForbidden
+	}
+
 	if limit <= 0 || limit > 50 {
 		limit = 30
 	}
@@ -219,6 +231,9 @@ func (s *DMService) ListDMMessages(ctx context.Context, dmGroupID, currentUserID
 		m.Sender = &u
 		messages = append(messages, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating DM messages: %w", err)
+	}
 
 	hasMore := false
 	var nextCursor *string
@@ -228,6 +243,8 @@ func (s *DMService) ListDMMessages(ctx context.Context, dmGroupID, currentUserID
 		nextCursor = &c
 		messages = messages[:limit]
 	}
+
+	populateMessagesMetadata(ctx, s.db, messages, currentUserID)
 
 	if messages == nil {
 		messages = []models.Message{}
@@ -253,6 +270,13 @@ func (s *DMService) SendDMMessage(ctx context.Context, dmGroupID, userID string,
 		return nil, ErrDMNotFound
 	}
 
+	var isMember bool
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM direct_message_members WHERE dm_group_id = $1 AND user_id = $2)
+	`, dmGroupID, userID).Scan(&isMember); err != nil || !isMember {
+		return nil, ErrDMForbidden
+	}
+
 	var msg models.Message
 	err = s.db.WithTransaction(ctx, func(tx *sql.Tx) error {
 		query := `
@@ -266,17 +290,13 @@ func (s *DMService) SendDMMessage(ctx context.Context, dmGroupID, userID string,
 			return fmt.Errorf("failed inserting DM message: %w", err)
 		}
 
+		// Link any attachments
+		for _, attID := range req.AttachmentIDs {
+			_, _ = tx.ExecContext(ctx, `UPDATE attachments SET message_id = $1 WHERE id = $2 AND workspace_id = $3`, msg.ID, attID, workspaceID)
+		}
+
 		// Update DM group updated_at
 		_, _ = tx.ExecContext(ctx, `UPDATE direct_message_groups SET updated_at = NOW() WHERE id = $1`, dmGroupID)
-
-		// Update unread count for other members
-		_, _ = tx.ExecContext(ctx, `
-			INSERT INTO read_states (user_id, dm_group_id, last_read_at, unread_count)
-			SELECT dmm.user_id, $1, NOW(), 1
-			FROM direct_message_members dmm
-			WHERE dmm.dm_group_id = $1 AND dmm.user_id != $2
-			ON CONFLICT (user_id, dm_group_id) WHERE dm_group_id IS NOT NULL DO UPDATE SET unread_count = read_states.unread_count + 1;
-		`, dmGroupID, userID)
 
 		return nil
 	})
@@ -284,6 +304,16 @@ func (s *DMService) SendDMMessage(ctx context.Context, dmGroupID, userID string,
 	if err != nil {
 		return nil, err
 	}
+
+	// Update unread count for other members outside the insert transaction (ordered by user_id)
+	_, _ = s.db.ExecContext(ctx, `
+		INSERT INTO read_states (user_id, dm_group_id, last_read_at, unread_count)
+		SELECT dmm.user_id, $1, NOW(), 1
+		FROM direct_message_members dmm
+		WHERE dmm.dm_group_id = $1 AND dmm.user_id != $2
+		ORDER BY dmm.user_id
+		ON CONFLICT (user_id, dm_group_id) WHERE dm_group_id IS NOT NULL DO UPDATE SET unread_count = read_states.unread_count + 1;
+	`, dmGroupID, userID)
 
 	var u models.UserResponse
 	_ = s.db.QueryRowContext(ctx, `
@@ -299,9 +329,24 @@ func (s *DMService) SendDMMessage(ctx context.Context, dmGroupID, userID string,
 	msg.Sender = &u
 	msg.Reactions = []models.ReactionSummary{}
 	msg.Attachments = []models.Attachment{}
+	if len(req.AttachmentIDs) > 0 {
+		single := []models.Message{msg}
+		populateMessagesMetadata(ctx, s.db, single, userID)
+		msg = single[0]
+	}
 
 	if s.hub != nil {
-		s.hub.BroadcastToWorkspace(workspaceID, "message.new", msg)
+		memberRows, err := s.db.QueryContext(ctx, `SELECT user_id FROM direct_message_members WHERE dm_group_id = $1`, dmGroupID)
+		if err == nil {
+			defer memberRows.Close()
+			for memberRows.Next() {
+				var memberID string
+				if err := memberRows.Scan(&memberID); err == nil && memberID != "" {
+					s.hub.SendToUser(memberID, "message.new", msg)
+				}
+			}
+			_ = memberRows.Err()
+		}
 	}
 
 	return &msg, nil

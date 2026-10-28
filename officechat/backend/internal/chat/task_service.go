@@ -14,7 +14,8 @@ import (
 )
 
 var (
-	ErrTaskNotFound = errors.New("task not found")
+	ErrTaskNotFound  = errors.New("task not found")
+	ErrTaskForbidden = errors.New("access denied: insufficient permissions for this workspace task")
 )
 
 type TaskService struct {
@@ -26,6 +27,39 @@ func NewTaskService(database *db.DB, hub *ws.Hub) *TaskService {
 	return &TaskService{db: database, hub: hub}
 }
 
+// AuthorizeWorkspaceAccess verifies that userID is the workspace owner or an active workspace member.
+func (s *TaskService) AuthorizeWorkspaceAccess(ctx context.Context, workspaceID, userID string) error {
+	if workspaceID == "" || userID == "" {
+		return ErrTaskForbidden
+	}
+	var allowed bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM workspaces w WHERE w.id = $1 AND w.owner_id = $2
+		) OR EXISTS(
+			SELECT 1
+			FROM workspace_members wm
+			JOIN users u ON wm.user_id = u.id
+			WHERE wm.workspace_id = $1 AND wm.user_id = $2
+			  AND COALESCE(u.account_state, 'active') = 'active'
+			  AND u.deleted_at IS NULL
+		)
+	`, workspaceID, userID).Scan(&allowed)
+	if err != nil || !allowed {
+		return ErrTaskForbidden
+	}
+	return nil
+}
+
+// AuthorizeTaskMutation verifies that userID has permission to modify a task in its workspace.
+func (s *TaskService) AuthorizeTaskMutation(ctx context.Context, taskID, userID string) error {
+	task, err := s.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	return s.AuthorizeWorkspaceAccess(ctx, task.WorkspaceID, userID)
+}
+
 // CreateTask creates a task (optionally from a message)
 func (s *TaskService) CreateTask(ctx context.Context, creatorID string, req models.CreateTaskRequest) (*models.Task, error) {
 	req.Title = strings.TrimSpace(req.Title)
@@ -34,6 +68,9 @@ func (s *TaskService) CreateTask(ctx context.Context, creatorID string, req mode
 	}
 	if req.WorkspaceID == "" {
 		return nil, errors.New("workspace_id is required")
+	}
+	if err := s.AuthorizeWorkspaceAccess(ctx, req.WorkspaceID, creatorID); err != nil {
+		return nil, err
 	}
 
 	var task models.Task
@@ -188,6 +225,9 @@ func (s *TaskService) ListWorkspaceTasks(ctx context.Context, workspaceID, statu
 			}
 		}
 		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating tasks: %w", err)
 	}
 
 	if tasks == nil {

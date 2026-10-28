@@ -41,7 +41,30 @@ import {
   Shield
 } from 'lucide-react';
 
+import {
+  chatApi,
+  buildWebSocketUrl,
+  discoverLatestTunnelUrl,
+  resolveApiUrl,
+  setActiveServerBaseUrl,
+  subscribeTunnelState,
+  type TunnelConnectionState,
+  type TunnelConfigPayload,
+  type BackendUser,
+  type BackendMessage,
+  type BackendAttachment,
+  type BackendChannel,
+  type BackendDMGroup,
+  type BackendWorkspaceMember,
+  type BackendTask,
+  type BackendPollSummary,
+  type WSIncomingEvent,
+} from './features/chat/chatApi';
+
 const AdminConsole = React.lazy(() => import('./features/admin/AdminConsole'));
+
+const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80';
+const DEFAULT_WORKSPACE_ID = '11111111-1111-1111-1111-111111111111';
 
 /* --- Domain Interfaces --- */
 interface User {
@@ -95,6 +118,7 @@ interface Message {
   rawDate: string; // "Today", "Yesterday"
   reactions: Reaction[];
   isPinned?: boolean;
+  replyCount?: number;
   replies?: { id: string; sender: User; content: string; timestamp: string }[];
   poll?: Poll;
   attachment?: Attachment;
@@ -107,7 +131,11 @@ interface Message {
 
 interface Conversation {
   id: string;
+  kind?: 'channel' | 'dm';
+  targetUserId?: string;
   name: string;
+  topic?: string;
+  memberCount?: number;
   isGroup: boolean;
   isPrivate?: boolean;
   avatar: string;
@@ -133,16 +161,145 @@ interface Task {
 interface Toast {
   id: string;
   message: string;
-  type?: 'success' | 'info' | 'warning';
+  type?: 'success' | 'info' | 'warning' | 'error';
 }
 
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
+function formatTime(isoString?: string): string {
+  if (!isoString) return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return 'Just now';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function normalizeStatus(st?: string): User['status'] {
+  if (st === 'online' || st === 'away' || st === 'dnd' || st === 'offline') return st;
+  return 'online';
+}
+
+function normalizeRole(role?: string, wsRole?: string): string {
+  if (wsRole) return wsRole;
+  if (!role) return 'Member';
+  const r = role.toLowerCase();
+  if (r === 'owner') return 'Owner';
+  if (r === 'admin') return 'Admin';
+  if (r === 'guest') return 'Guest';
+  return 'Member';
+}
+
+function mapBackendUser(u?: BackendUser, wsRole?: string): User {
+  if (!u) {
+    return {
+      id: 'unknown',
+      name: 'Team Member',
+      handle: '@member',
+      role: wsRole || 'Member',
+      status: 'online',
+      avatar: DEFAULT_AVATAR,
+    };
+  }
+  const fullName = u.full_name || u.display_name || u.email.split('@')[0] || 'User';
+  const display = u.display_name || fullName.split(' ')[0] || 'user';
+  return {
+    id: u.id,
+    name: fullName,
+    handle: '@' + display.toLowerCase().replace(/\s+/g, ''),
+    email: u.email,
+    team: u.department || 'Engineering',
+    role: normalizeRole(u.role, wsRole),
+    status: normalizeStatus(u.status),
+    customStatus: u.custom_status || 'Active',
+    avatar: u.avatar_url || DEFAULT_AVATAR,
+  };
+}
+
+function mapBackendPoll(p: BackendPollSummary): Poll {
+  return {
+    id: p.id,
+    question: p.question,
+    options: (p.options || []).map(o => ({
+      id: o.id,
+      text: o.option_text,
+      votes: o.vote_count || 0,
+      voterAvatars: [],
+    })),
+    totalVotes: p.total_votes || 0,
+    userVoted: p.user_voted_id || undefined,
+    deadline: p.is_closed ? 'Closed' : 'Active Poll',
+  };
+}
+
+function mapBackendMessage(m: BackendMessage, currentUserId: string): Message {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('officechat_access_token') || '' : '';
+  const mappedAttachments: Attachment[] = (m.attachments || []).map(att => {
+    let resolvedUrl = att.file_url;
+    if (resolvedUrl) {
+      resolvedUrl = resolveApiUrl(resolvedUrl);
+      if (token) {
+        const sep = resolvedUrl.includes('?') ? '&' : '?';
+        resolvedUrl = `${resolvedUrl}${sep}token=${encodeURIComponent(token)}`;
+      }
+    }
+    return {
+      id: att.id,
+      name: att.file_name,
+      size: formatBytes(att.file_size),
+      type: att.content_type || 'application/octet-stream',
+      url: resolvedUrl,
+    };
+  });
+
+  const mappedReactions: Reaction[] = (m.reactions || []).map(r => {
+    const users = [...(r.user_ids || [])];
+    if (r.has_reacted && currentUserId && !users.includes(currentUserId)) {
+      users.push(currentUserId);
+    }
+    return {
+      emoji: r.emoji,
+      count: r.count,
+      users,
+    };
+  });
+
+  return {
+    id: m.id,
+    sender: mapBackendUser(m.sender),
+    content: m.content,
+    timestamp: formatTime(m.created_at),
+    rawDate: 'Today',
+    reactions: mappedReactions,
+    isPinned: Boolean(m.is_pinned),
+    replyCount: m.reply_count || 0,
+    isEdited: Boolean(m.edited_at),
+    status: 'delivered',
+    attachment: mappedAttachments[0],
+    attachments: mappedAttachments.length > 0 ? mappedAttachments : undefined,
+    poll: m.poll ? mapBackendPoll(m.poll) : undefined,
+  };
+}
+
+function mapBackendTask(t: BackendTask): Task {
+  return {
+    id: t.id,
+    title: t.title,
+    status: t.status,
+    assignedTo: t.assignee?.full_name || t.creator?.full_name || 'Unassigned',
+    dueDate: t.due_date ? new Date(t.due_date).toLocaleDateString() : 'Active',
+    channel: '#workspace',
+  };
+}
 
 export default function App() {
   /* --- Global States --- */
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [activeWorkspace] = useState('Acme Corp');
+  const [activeWorkspace, setActiveWorkspace] = useState('Acme Corporation');
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(DEFAULT_WORKSPACE_ID);
   const [activeChannel, setActiveChannel] = useState('general');
   const [activeTab, setActiveTab] = useState<'chat' | 'tasks'>('chat');
   const [searchQuery, setSearchQuery] = useState('');
@@ -153,7 +310,7 @@ export default function App() {
   /* Conversation Search & Filter States */
   const [conversationFilter, setConversationFilter] = useState<'all' | 'pinned' | 'groups' | 'archived'>('all');
   const [conversationSearch, setConversationSearch] = useState('');
-  const [activeConversationId, setActiveConversationId] = useState('c_general');
+  const [activeConversationId, setActiveConversationId] = useState('');
 
   /* Advanced Composer States */
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -161,141 +318,52 @@ export default function App() {
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
 
-  /* Conversations Data */
-  const [conversations, setConversations] = useState<Conversation[]>([
-    {
-      id: 'c_general',
-      name: 'general',
-      isGroup: true,
-      isPrivate: false,
-      avatar: '',
-      lastMessage: 'All-Hands sync schedule vote is live',
-      timestamp: '10:35 AM',
-      unreadCount: 0,
-      isPinned: true,
-      isMuted: false,
-      isArchived: false
-    },
-    {
-      id: 'c_sarah',
-      name: 'Sarah Connor',
-      isGroup: false,
-      avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
-      lastMessage: 'Distributed Go REST & WebSocket stack is live with sub-5ms pool.',
-      timestamp: '10:14 AM',
-      unreadCount: 2,
-      isPinned: true,
-      isMuted: false,
-      isArchived: false,
-      status: 'online',
-      role: 'Engineering Lead'
-    },
-    {
-      id: 'c_dev_team',
-      name: 'dev-team',
-      isGroup: true,
-      isPrivate: true,
-      avatar: '',
-      lastMessage: 'Database connection pooling is verified at sub-5ms latency.',
-      timestamp: '10:16 AM',
-      unreadCount: 0,
-      isPinned: false,
-      isMuted: false,
-      isArchived: false
-    },
-    {
-      id: 'c_alex',
-      name: 'Alex Chen',
-      isGroup: false,
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80',
-      lastMessage: 'Here is the SQL snippet for the full-text search index on messages.',
-      timestamp: '10:22 AM',
-      unreadCount: 0,
-      isPinned: false,
-      isMuted: true,
-      isArchived: false,
-      status: 'away',
-      role: 'Staff DevOps'
-    },
-    {
-      id: 'c_announcements',
-      name: 'announcements',
-      isGroup: true,
-      isPrivate: false,
-      avatar: '',
-      lastMessage: 'OfficeChat v2.0 deployed to production cluster.',
-      timestamp: '09:00 AM',
-      unreadCount: 3,
-      isPinned: false,
-      isMuted: false,
-      isArchived: false
-    },
-    {
-      id: 'c_elena',
-      name: 'Elena Rostova',
-      isGroup: false,
-      avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&auto=format&fit=crop&q=80',
-      lastMessage: 'Can you verify the design tokens checklist for dark & light mode?',
-      timestamp: '08:45 AM',
-      unreadCount: 1,
-      isPinned: false,
-      isMuted: false,
-      isArchived: false,
-      status: 'dnd',
-      role: 'Product Manager'
-    },
-    {
-      id: 'c_product',
-      name: 'product',
-      isGroup: true,
-      isPrivate: false,
-      avatar: '',
-      lastMessage: 'Q4 roadmap deliverables finalized.',
-      timestamp: 'Yesterday',
-      unreadCount: 0,
-      isPinned: false,
-      isMuted: false,
-      isArchived: false
-    },
-    {
-      id: 'c_devops',
-      name: 'DevOps On-Call',
-      isGroup: true,
-      isPrivate: true,
-      avatar: '',
-      lastMessage: 'Nightly database vacuum and backup completed successfully.',
-      timestamp: 'Yesterday',
-      unreadCount: 0,
-      isPinned: false,
-      isMuted: true,
-      isArchived: false
-    },
-    {
-      id: 'c_archive_slack',
-      name: 'Legacy Slack Archive',
-      isGroup: true,
-      isPrivate: false,
-      avatar: '',
-      lastMessage: 'Archive snapshot from previous workspace.',
-      timestamp: 'Oct 12',
-      unreadCount: 0,
-      isPinned: false,
-      isMuted: false,
-      isArchived: true
-    }
-  ]);
+  /* Backend Connection & Loading/Error States */
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(localStorage.getItem('officechat_access_token')));
+  const [wsConnected, setWsConnected] = useState(false);
+  const [tunnelState, setTunnelState] = useState<TunnelConnectionState | null>(null);
+  const [wsReconnectNonce, setWsReconnectNonce] = useState(0);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
 
+  /* Subscribe to Cloudflare Quick Tunnel Discovery & Auto-Update State */
+  useEffect(() => {
+    const unsubscribe = subscribeTunnelState(state => {
+      setTunnelState(state);
+    });
+    // Initial check for current tunnel URL
+    discoverLatestTunnelUrl().catch(() => {});
+    return unsubscribe;
+  }, []);
 
-
-
+  /* Conversations Data (Populated strictly from Backend Channels, DMs & Members) */
+  const [conversations, setConversations] = useState<Conversation[]>([]);
 
   /* Modal States */
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showPollModal, setShowPollModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showCreateChannelModal, setShowCreateChannelModal] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelDesc, setNewChannelDesc] = useState('');
+  const [newChannelIsPrivate, setNewChannelIsPrivate] = useState(false);
+  const [isCreatingChannel, setIsCreatingChannel] = useState(false);
 
+  /* Password Change State */
+  const [currentPasswordInput, setCurrentPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [passwordChangeStatus, setPasswordChangeStatus] = useState<{ text: string; success: boolean } | null>(null);
 
+  /* Global Search State in Command Palette */
+  const [searchResults, setSearchResults] = useState<{
+    messages: BackendMessage[];
+    attachments: BackendAttachment[];
+  }>({ messages: [], attachments: [] });
+  const [isSearching, setIsSearching] = useState(false);
 
   /* Action Toasts - visibly hidden per user request */
   const addToast = useCallback((_message?: string, _type?: Toast['type']) => {
@@ -330,20 +398,20 @@ export default function App() {
 
   /* Current Authenticated User (Strict 4-tier roles: Owner, Admin, Member, Guest) */
   const [currentUser, setCurrentUser] = useState<User>({
-    id: 'e13a6f34-e912-418e-8463-7a76840a00f9',
-    name: 'Admin User',
-    handle: '@admin',
-    email: 'admin@officechat.local',
-    team: 'Core Architecture',
-    role: 'Owner',
-    status: 'online',
-    customStatus: 'Building OfficeChat 🚀',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'
+    id: '',
+    name: 'Sign In Required',
+    handle: '@guest',
+    email: '',
+    team: 'Workspace',
+    role: 'Member',
+    status: 'offline',
+    customStatus: 'Not signed in',
+    avatar: DEFAULT_AVATAR,
   });
 
   /* Admin Console direct URL guard */
   useEffect(() => {
-    if (window.location.pathname.startsWith('/admin')) {
+    if (window.location.pathname.startsWith('/admin') && currentUser.id) {
       const role = (currentUser.role || '').toLowerCase();
       if (role !== 'owner' && role !== 'admin') {
         const timer = setTimeout(() => {
@@ -354,19 +422,19 @@ export default function App() {
         return () => clearTimeout(timer);
       }
     }
-  }, [currentUser.role, addToast]);
+  }, [currentUser.id, currentUser.role, addToast]);
 
-  const [customStatusInput, setCustomStatusInput] = useState(currentUser.customStatus || '');
+  const [customStatusInput, setCustomStatusInput] = useState('');
 
   /* Settings Area States */
   const [settingsTab, setSettingsTab] = useState<'account' | 'notifications' | 'theme' | 'backup'>('account');
-  const [accountName, setAccountName] = useState('Admin User');
-  const [accountEmail, setAccountEmail] = useState('admin@officechat.local');
-  const [accountTeam, setAccountTeam] = useState('Core Architecture');
-  const [accountRole, setAccountRole] = useState('Owner');
+  const [accountName, setAccountName] = useState('');
+  const [accountEmail, setAccountEmail] = useState('');
+  const [accountTeam, setAccountTeam] = useState('Engineering');
+  const [accountRole, setAccountRole] = useState('Member');
   const [isDndActive, setIsDndActive] = useState(false);
   const [isMuteActive, setIsMuteActive] = useState(false);
-  const [backupEmail, setBackupEmail] = useState('admin@officechat.local');
+  const [backupEmail, setBackupEmail] = useState('');
 
   /* Auth form inputs */
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -397,226 +465,27 @@ export default function App() {
   /* Task creation form input */
   const [newTaskTitle, setNewTaskTitle] = useState('');
 
-  /* Pre-seeded Rich Messages (with Received vs Sent Bubbles, Status Ticks) */
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'm1',
-      sender: {
-        id: 'u2',
-        name: 'Sarah Connor',
-        handle: '@sarah',
-        role: 'Engineering Lead',
-        status: 'online',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&auto=format&fit=crop&q=80'
-      },
-      content: 'Welcome team! 🏢💬 Our distributed Go REST and WebSocket stack is connected to PostgreSQL and Redis. High-throughput event fanout is live.',
-      timestamp: '10:14 AM',
-      rawDate: 'Today',
-      attachment: {
-        id: 'att_seed_1',
-        name: 'network_architecture.png',
-        size: '1.4 MB',
-        type: 'image/png',
-        url: 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=800&auto=format&fit=crop&q=80'
-      },
-      reactions: [
-        { emoji: '🚀', count: 5, users: ['Admin User'] },
-        { emoji: '🎉', count: 4, users: [] },
-        { emoji: '🔥', count: 3, users: [] }
-      ],
-      isPinned: true,
-      status: 'read',
-      replies: [
-        {
-          id: 'r1',
-          sender: {
-            id: 'u3',
-            name: 'Alex Chen',
-            handle: '@alex',
-            role: 'Staff DevOps',
-            status: 'away',
-            avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80'
-          },
-          content: 'Database connection pooling is verified at sub-5ms latency.',
-          timestamp: '10:16 AM'
-        }
-      ]
-    },
-    {
-      id: 'm2',
-      sender: {
-        id: 'u3',
-        name: 'Alex Chen',
-        handle: '@alex',
-        role: 'Staff DevOps',
-        status: 'away',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80'
-      },
-      content: 'Here is the SQL snippet for the full-text search index on messages table:',
-      timestamp: '10:22 AM',
-      rawDate: 'Today',
-      reactions: [{ emoji: '⚡', count: 4, users: [] }],
-      status: 'read',
-      codeSnippet: {
-        language: 'sql',
-        code: `CREATE INDEX idx_messages_search ON messages USING GIN(to_tsvector('english', content));`
-      }
-    },
-    {
-      id: 'm3',
-      sender: {
-        id: 'u3',
-        name: 'Alex Chen',
-        handle: '@alex',
-        role: 'Staff DevOps',
-        status: 'away',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80'
-      },
-      content: 'Notice the GIN index ensures fast query lookup even across millions of team messages. @admin please review!',
-      timestamp: '10:23 AM',
-      rawDate: 'Today',
-      reactions: [],
-      status: 'read'
-    },
-    {
-      id: 'm4',
-      sender: {
-        id: 'u4',
-        name: 'Elena Rostova',
-        handle: '@elena',
-        role: 'Product Manager',
-        status: 'dnd',
-        avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=120&auto=format&fit=crop&q=80'
-      },
-      content: 'Could everyone please vote on the All-Hands schedule? We will finalize today.',
-      timestamp: '10:35 AM',
-      rawDate: 'Today',
-      reactions: [{ emoji: '👀', count: 3, users: ['Admin User'] }],
-      status: 'read',
-      poll: {
-        id: 'p1',
-        question: 'What time works best for tomorrow’s All-Hands sync?',
-        options: [
-          {
-            id: 'opt1',
-            text: '10:00 AM EST (Morning kickoff)',
-            votes: 7,
-            voterAvatars: [
-              'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&auto=format&fit=crop&q=80',
-              'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&auto=format&fit=crop&q=80'
-            ]
-          },
-          {
-            id: 'opt2',
-            text: '02:00 PM EST (Afternoon plenary)',
-            votes: 12,
-            voterAvatars: [
-              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&auto=format&fit=crop&q=80',
-              'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=80&auto=format&fit=crop&q=80'
-            ]
-          },
-          {
-            id: 'opt3',
-            text: '04:30 PM EST (End of day recap)',
-            votes: 3,
-            voterAvatars: []
-          }
-        ],
-        totalVotes: 22,
-        userVoted: 'opt2',
-        deadline: 'Active • Closes 2:00 PM'
-      }
-    },
-    {
-      id: 'm5',
-      sender: {
-        id: 'e13a6f34-e912-418e-8463-7a76840a00f9',
-        name: 'Admin User',
-        handle: '@admin',
-        role: 'Lead Architect',
-        status: 'online',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'
-      },
-      content: 'I verified the full-text search index and WebSocket fanout. Average query latency is down to 1.8ms! 🚀',
-      timestamp: '10:38 AM',
-      rawDate: 'Today',
-      attachment: {
-        id: 'att_seed_2',
-        name: 'database_cluster_spec.pdf',
-        size: '2.4 MB',
-        type: 'application/pdf'
-      },
-      reactions: [{ emoji: '🔥', count: 4, users: ['Sarah Connor', 'Alex Chen'] }],
-      status: 'read'
-    },
-    {
-      id: 'm6',
-      sender: {
-        id: 'e13a6f34-e912-418e-8463-7a76840a00f9',
-        name: 'Admin User',
-        handle: '@admin',
-        role: 'Lead Architect',
-        status: 'online',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'
-      },
-      content: 'Architecture update: Redis pub/sub message fanout is operational with sub-5ms latency.',
-      timestamp: '10:41 AM',
-      rawDate: 'Today',
-      reactions: [],
-      status: 'read'
-    },
-    {
-      id: 'm7',
-      sender: {
-        id: 'e13a6f34-e912-418e-8463-7a76840a00f9',
-        name: 'Admin User',
-        handle: '@admin',
-        role: 'Lead Architect',
-        status: 'online',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'
-      },
-      content: 'Sounds great Elena, 2:00 PM EST works best for the plenary session.',
-      timestamp: '10:43 AM',
-      rawDate: 'Today',
-      reactions: [{ emoji: '👍', count: 2, users: ['Elena Rostova'] }],
-      status: 'delivered',
-      replyTo: {
-        id: 'm4',
-        senderName: 'Elena Rostova',
-        content: 'Could everyone please vote on the All-Hands schedule? We will finalize today.'
-      }
-    }
-  ]);
-
-  /* Tasks State */
-  const [tasks, setTasks] = useState<Task[]>([
-    {
-      id: 't1',
-      title: 'Review WebSocket reconnect backoff strategy',
-      status: 'in_progress',
-      assignedTo: 'Sarah Connor',
-      dueDate: 'Today',
-      channel: '#dev-team'
-    },
-    {
-      id: 't2',
-      title: 'Verify PostgreSQL GIN index benchmarks',
-      status: 'done',
-      assignedTo: 'Alex Chen',
-      dueDate: 'Yesterday',
-      channel: '#general'
-    },
-    {
-      id: 't3',
-      title: 'Schedule real-time messaging audit and review',
-      status: 'todo',
-      assignedTo: 'Admin User',
-      dueDate: 'Tomorrow',
-      channel: '#product'
-    }
-  ]);
+  /* Live Messages & Tasks State (Populated strictly from Backend APIs & WebSocket) */
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const activeConversationIdRef = useRef(activeConversationId);
+  const currentUserIdRef = useRef(currentUser.id);
+  const wsRef = useRef<WebSocket | null>(null);
+  const lastTypingSentRef = useRef<number>(0);
+  const typingTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const memberDirectoryRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+    setTypingUsers({});
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    currentUserIdRef.current = currentUser.id;
+  }, [currentUser.id]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -626,55 +495,681 @@ export default function App() {
     scrollToBottom();
   }, [messages]);
 
-  /* Auto-grow composer textarea */
+  /* Build Unified Conversations List from Backend Channels, DMs & Members */
+  const buildConversationsList = useCallback(
+    (
+      backendChannels: BackendChannel[],
+      backendDMs: BackendDMGroup[],
+      backendMembers: BackendWorkspaceMember[],
+      meId: string
+    ): Conversation[] => {
+      const channelItems: Conversation[] = backendChannels.map(ch => ({
+        id: ch.id,
+        kind: 'channel',
+        name: ch.name,
+        topic: ch.topic || ch.description || `Channel #${ch.name}`,
+        memberCount: ch.member_count || backendMembers.length || 1,
+        isGroup: true,
+        isPrivate: Boolean(ch.is_private),
+        avatar: '',
+        lastMessage: ch.topic || ch.description || `#${ch.name}`,
+        timestamp: formatTime(ch.updated_at || ch.created_at),
+        unreadCount: ch.unread_count || 0,
+        isPinned: ch.name === 'general',
+        isMuted: false,
+        isArchived: Boolean(ch.is_archived),
+      }));
+
+      const dmPartnerIds = new Set<string>();
+      const dmItems: Conversation[] = backendDMs.map(dm => {
+        const otherMembers = (dm.members || []).filter(m => m.id !== meId);
+        const primaryPartner = otherMembers[0] || (dm.members && dm.members[0]);
+        if (!dm.is_group && primaryPartner) {
+          dmPartnerIds.add(primaryPartner.id);
+        }
+        const dmName = dm.is_group
+          ? dm.name || otherMembers.map(m => m.full_name || m.display_name).join(', ') || 'Group DM'
+          : primaryPartner?.full_name || primaryPartner?.display_name || primaryPartner?.email || 'Direct Message';
+
+        return {
+          id: dm.id,
+          kind: 'dm',
+          targetUserId: primaryPartner?.id,
+          name: dmName,
+          isGroup: Boolean(dm.is_group),
+          isPrivate: true,
+          avatar: primaryPartner?.avatar_url || DEFAULT_AVATAR,
+          lastMessage: 'Direct Message',
+          timestamp: formatTime(dm.updated_at || dm.created_at),
+          unreadCount: dm.unread_count || 0,
+          isPinned: false,
+          isMuted: false,
+          isArchived: false,
+          status: normalizeStatus(primaryPartner?.status),
+          role: primaryPartner?.department || normalizeRole(primaryPartner?.role),
+        };
+      });
+
+      // Include other active workspace members so 1:1 DMs can be started with a single click
+      const memberDmPlaceholders: Conversation[] = backendMembers
+        .filter(m => m.user && m.user_id !== meId && !dmPartnerIds.has(m.user_id) && m.user.account_state !== 'deactivated')
+        .map(m => {
+          const u = m.user!;
+          return {
+            id: `dm_user_${u.id}`,
+            kind: 'dm',
+            targetUserId: u.id,
+            name: u.full_name || u.display_name || u.email,
+            isGroup: false,
+            isPrivate: true,
+            avatar: u.avatar_url || DEFAULT_AVATAR,
+            lastMessage: `Start a direct message with ${u.display_name || u.full_name}`,
+            timestamp: '',
+            unreadCount: 0,
+            isPinned: false,
+            isMuted: false,
+            isArchived: false,
+            status: normalizeStatus(u.status),
+            role: m.role || u.department || 'Member',
+          };
+        });
+
+      return [...channelItems, ...dmItems, ...memberDmPlaceholders];
+    },
+    []
+  );
+
+  /* Load Workspace, Channels, DMs, Members, Presence & Tasks from Backend */
+  const loadWorkspaceBootstrap = useCallback(async () => {
+    try {
+      const me = await chatApi.getMe();
+      setIsAuthenticated(true);
+      setShowAuthModal(false);
+
+      const workspaces = await chatApi.listWorkspaces();
+      const ws = workspaces[0];
+      const wsId = ws?.id || DEFAULT_WORKSPACE_ID;
+      if (ws?.name) setActiveWorkspace(ws.name);
+      setActiveWorkspaceId(wsId);
+
+      const [channelsRes, dmsRes, membersRes, tasksRes, presenceRes] = await Promise.all([
+        chatApi.listChannels(wsId).catch(() => [] as BackendChannel[]),
+        chatApi.listDMs(wsId).catch(() => [] as BackendDMGroup[]),
+        chatApi.listWorkspaceMembers(wsId).catch(() => [] as BackendWorkspaceMember[]),
+        chatApi.listTasks(wsId).catch(() => [] as BackendTask[]),
+        chatApi.getPresence(wsId).catch(() => []),
+      ]);
+
+      // Apply live presence statuses to members
+      const presenceMap = new Map(presenceRes.map(p => [p.user_id, p]));
+      const enrichedMembers = membersRes.map(m => {
+        if (m.user && presenceMap.has(m.user_id)) {
+          const pr = presenceMap.get(m.user_id)!;
+          return {
+            ...m,
+            user: {
+              ...m.user,
+              status: pr.status || m.user.status,
+              custom_status: pr.custom_status || m.user.custom_status,
+            },
+          };
+        }
+        return m;
+      });
+
+      const myMembership = enrichedMembers.find(m => m.user_id === me.id);
+      const mappedMe = mapBackendUser(me, myMembership?.role);
+      const dir: Record<string, string> = { [me.id]: mappedMe.name };
+      enrichedMembers.forEach(m => {
+        if (m.user) {
+          dir[m.user_id] = m.user.full_name || m.user.display_name || m.user.email;
+        }
+      });
+      memberDirectoryRef.current = dir;
+      setCurrentUser(mappedMe);
+      setAccountName(mappedMe.name);
+      setAccountEmail(mappedMe.email || me.email);
+      setAccountTeam(mappedMe.team || 'Engineering');
+      setAccountRole(mappedMe.role);
+      setBackupEmail(mappedMe.email || me.email);
+      setCustomStatusInput(mappedMe.customStatus || '');
+      setIsDndActive(mappedMe.status === 'dnd');
+
+      const convList = buildConversationsList(channelsRes, dmsRes, enrichedMembers, me.id);
+      setConversations(convList);
+      setTasks(tasksRes.map(mapBackendTask));
+
+      setActiveConversationId(prevId => {
+        if (prevId && convList.some(c => c.id === prevId)) {
+          return prevId;
+        }
+        const generalCh = convList.find(c => c.kind === 'channel' && c.name === 'general') || convList[0];
+        if (generalCh) {
+          setActiveChannel(generalCh.name);
+          return generalCh.id;
+        }
+        return '';
+      });
+    } catch {
+      setIsAuthenticated(false);
+      setShowAuthModal(true);
+    }
+  }, [buildConversationsList]);
+
+  useEffect(() => {
+    loadWorkspaceBootstrap();
+  }, [loadWorkspaceBootstrap]);
+
+  /* Load Messages for Active Conversation (Channel or DM) */
+  const loadConversationHistory = useCallback(
+    async (convId: string, kind?: 'channel' | 'dm') => {
+      if (!convId || convId.startsWith('dm_user_') || !isAuthenticated) return;
+      setIsLoadingMessages(true);
+      setChatError(null);
+
+      try {
+        const resolvedKind =
+          kind || conversations.find(c => c.id === convId)?.kind || 'channel';
+
+        const res =
+          resolvedKind === 'dm'
+            ? await chatApi.listDMMessages(convId, '', 50, activeWorkspaceId)
+            : await chatApi.listChannelMessages(convId, '', 50, activeWorkspaceId);
+
+        const chronological = [...(res.messages || [])].reverse();
+        const uiMessages = chronological.map(m => mapBackendMessage(m, currentUserIdRef.current));
+        setMessages(uiMessages);
+
+        if (uiMessages.length > 0) {
+          const latest = uiMessages[uiMessages.length - 1];
+          setConversations(prev =>
+            prev.map(c =>
+              c.id === convId
+                ? {
+                    ...c,
+                    lastMessage: latest.content || (latest.attachment ? `📎 ${latest.attachment.name}` : c.lastMessage),
+                    timestamp: latest.timestamp,
+                    unreadCount: 0,
+                  }
+                : c
+            )
+          );
+        }
+
+        // Mark conversation read on backend
+        if (resolvedKind === 'dm') {
+          chatApi.markDMRead(convId, activeWorkspaceId).catch(() => {});
+        } else {
+          chatApi.markChannelRead(convId, activeWorkspaceId).catch(() => {});
+        }
+      } catch (err) {
+        setChatError(err instanceof Error ? err.message : 'Failed to load conversation history');
+        setMessages([]);
+      } finally {
+        setIsLoadingMessages(false);
+      }
+    },
+    [activeWorkspaceId, conversations, isAuthenticated]
+  );
+
+  useEffect(() => {
+    if (activeConversationId && !activeConversationId.startsWith('dm_user_') && isAuthenticated) {
+      const conv = conversations.find(c => c.id === activeConversationId);
+      loadConversationHistory(activeConversationId, conv?.kind);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversationId, isAuthenticated]);
+
+  /* Select a Conversation (automatically creates/opens 1:1 DM if clicking a workspace member) */
+  const handleSelectConversation = useCallback(
+    async (conv: Conversation) => {
+      setActiveTab('chat');
+      setIsMobileMenuOpen(false);
+      setChatError(null);
+
+      if (conv.id.startsWith('dm_user_') && conv.targetUserId) {
+        try {
+          const dmGroup = await chatApi.getOrCreateDM(activeWorkspaceId, [conv.targetUserId]);
+          const realConv: Conversation = {
+            ...conv,
+            id: dmGroup.id,
+            kind: 'dm',
+            unreadCount: 0,
+          };
+          setConversations(prev =>
+            prev.map(item => (item.id === conv.id || item.id === dmGroup.id ? realConv : item))
+          );
+          setActiveConversationId(dmGroup.id);
+          setActiveChannel(realConv.name);
+          await loadConversationHistory(dmGroup.id, 'dm');
+        } catch (err) {
+          setChatError(err instanceof Error ? err.message : 'Could not start direct message');
+        }
+        return;
+      }
+
+      setActiveConversationId(conv.id);
+      setActiveChannel(conv.name);
+      setConversations(prev => prev.map(item => (item.id === conv.id ? { ...item, unreadCount: 0 } : item)));
+    },
+    [activeWorkspaceId, loadConversationHistory]
+  );
+
+  /* Live WebSocket Connection (/api/v1/ws) with Automatic Reconnect & History Sync */
+  useEffect(() => {
+    if (!isAuthenticated || !activeWorkspaceId) return;
+
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let isUnmounted = false;
+    let hadPriorConnection = false;
+
+    const connectWs = () => {
+      if (isUnmounted) return;
+      const wsUrl = buildWebSocketUrl(activeWorkspaceId);
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (isUnmounted) return;
+        setWsConnected(true);
+        if (hadPriorConnection && activeConversationIdRef.current) {
+          // Refresh history and sidebar state after reconnecting
+          loadWorkspaceBootstrap();
+          loadConversationHistory(activeConversationIdRef.current);
+        }
+        hadPriorConnection = true;
+      };
+
+      ws.onmessage = event => {
+        if (isUnmounted) return;
+        try {
+          const packet = JSON.parse(event.data) as WSIncomingEvent;
+          const { type, payload } = packet;
+
+          if (type === 'message.new' && payload) {
+            const bMsg = payload as BackendMessage;
+            const uiMsg = mapBackendMessage(bMsg, currentUserIdRef.current);
+            const targetConvId = bMsg.channel_id || bMsg.dm_group_id || '';
+
+            // Clear any active typing indicator for the sender of this message
+            if (bMsg.sender_id && typingTimersRef.current[bMsg.sender_id]) {
+              clearTimeout(typingTimersRef.current[bMsg.sender_id]);
+              delete typingTimersRef.current[bMsg.sender_id];
+            }
+            if (bMsg.sender_id) {
+              setTypingUsers(prev => {
+                if (!prev[bMsg.sender_id]) return prev;
+                const next = { ...prev };
+                delete next[bMsg.sender_id];
+                return next;
+              });
+            }
+
+            // If this is a thread reply (parent_id set)
+            if (bMsg.parent_id) {
+              const replyObj = {
+                id: uiMsg.id,
+                sender: uiMsg.sender,
+                content: uiMsg.content,
+                timestamp: uiMsg.timestamp,
+              };
+              setMessages(prev =>
+                prev.map(m => {
+                  if (m.id !== bMsg.parent_id) return m;
+                  const existingReplies = m.replies || [];
+                  if (existingReplies.some(r => r.id === replyObj.id)) return m;
+                  const nextReplies = [...existingReplies, replyObj];
+                  return {
+                    ...m,
+                    replyCount: Math.max((m.replyCount || 0) + 1, nextReplies.length),
+                    replies: nextReplies,
+                  };
+                })
+              );
+              setActiveThreadMessage(prev => {
+                if (!prev || prev.id !== bMsg.parent_id) return prev;
+                const existingReplies = prev.replies || [];
+                if (existingReplies.some(r => r.id === replyObj.id)) return prev;
+                const nextReplies = [...existingReplies, replyObj];
+                return {
+                  ...prev,
+                  replyCount: Math.max((prev.replyCount || 0) + 1, nextReplies.length),
+                  replies: nextReplies,
+                };
+              });
+              return;
+            }
+
+            if (targetConvId === activeConversationIdRef.current) {
+              // Deduplicate by message ID so sender does not see duplicate bubble
+              setMessages(prev => (prev.some(m => m.id === uiMsg.id) ? prev : [...prev, uiMsg]));
+              if (bMsg.dm_group_id) {
+                chatApi.markDMRead(targetConvId, activeWorkspaceId).catch(() => {});
+              } else if (bMsg.channel_id) {
+                chatApi.markChannelRead(targetConvId, activeWorkspaceId).catch(() => {});
+              }
+            }
+
+            // Update conversation preview and unread count
+            setConversations(prev => {
+              const exists = prev.some(c => c.id === targetConvId);
+              if (!exists && bMsg.dm_group_id) {
+                // New DM initiated by another user — refresh workspace DMs
+                loadWorkspaceBootstrap();
+                return prev;
+              }
+              return prev.map(c => {
+                if (c.id !== targetConvId) return c;
+                const isCurrent = targetConvId === activeConversationIdRef.current;
+                const isFromMe = bMsg.sender_id === currentUserIdRef.current;
+                return {
+                  ...c,
+                  lastMessage: uiMsg.content || (uiMsg.attachment ? `📎 ${uiMsg.attachment.name}` : c.lastMessage),
+                  timestamp: uiMsg.timestamp,
+                  unreadCount: isCurrent || isFromMe ? 0 : c.unreadCount + 1,
+                };
+              });
+            });
+          } else if (type === 'message.updated' && payload) {
+            const bMsg = payload as BackendMessage;
+            setMessages(prev =>
+              prev.map(m =>
+                m.id === bMsg.id
+                  ? { ...m, content: bMsg.content, isEdited: true }
+                  : m
+              )
+            );
+          } else if (type === 'message.deleted' && payload) {
+            const del = payload as { id: string };
+            setMessages(prev => prev.filter(m => m.id !== del.id));
+          } else if ((type === 'reaction.added' || type === 'reaction.removed') && payload) {
+            const rEvt = payload as { message_id: string; user_id: string; emoji: string };
+            setMessages(prev =>
+              prev.map(m => {
+                if (m.id !== rEvt.message_id) return m;
+                const existingList = m.reactions || [];
+                const found = existingList.find(r => r.emoji === rEvt.emoji);
+                if (type === 'reaction.added') {
+                  if (found) {
+                    if (found.users.includes(rEvt.user_id)) return m;
+                    return {
+                      ...m,
+                      reactions: existingList.map(r =>
+                        r.emoji === rEvt.emoji
+                          ? { ...r, count: r.count + 1, users: [...r.users, rEvt.user_id] }
+                          : r
+                      ),
+                    };
+                  }
+                  return {
+                    ...m,
+                    reactions: [...existingList, { emoji: rEvt.emoji, count: 1, users: [rEvt.user_id] }],
+                  };
+                } else {
+                  if (!found) return m;
+                  const nextUsers = found.users.filter(u => u !== rEvt.user_id);
+                  const nextCount = Math.max(0, found.count - 1);
+                  if (nextCount === 0) {
+                    return {
+                      ...m,
+                      reactions: existingList.filter(r => r.emoji !== rEvt.emoji),
+                    };
+                  }
+                  return {
+                    ...m,
+                    reactions: existingList.map(r =>
+                      r.emoji === rEvt.emoji ? { ...r, count: nextCount, users: nextUsers } : r
+                    ),
+                  };
+                }
+              })
+            );
+          } else if ((type === 'poll.created' || type === 'poll.voted' || type === 'poll.closed') && payload) {
+            const pollSummary = payload as BackendPollSummary;
+            const uiPoll = mapBackendPoll(pollSummary);
+            setMessages(prev =>
+              prev.map(m => (m.poll?.id === uiPoll.id ? { ...m, poll: uiPoll } : m))
+            );
+          } else if (type === 'task.created' && payload) {
+            const bTask = payload as BackendTask;
+            const uiTask = mapBackendTask(bTask);
+            setTasks(prev => (prev.some(t => t.id === uiTask.id) ? prev : [uiTask, ...prev]));
+          } else if (type === 'task.updated' && payload) {
+            const bTask = payload as BackendTask;
+            const uiTask = mapBackendTask(bTask);
+            setTasks(prev => prev.map(t => (t.id === uiTask.id ? uiTask : t)));
+          } else if (
+            type === 'channel.created' ||
+            type === 'channel.updated' ||
+            type === 'channel.members_updated'
+          ) {
+            loadWorkspaceBootstrap();
+          } else if (type === 'presence.updated' && payload) {
+            const p = payload as { user_id: string; status: 'online' | 'away' | 'dnd' | 'offline' };
+            if (p.user_id) {
+              setConversations(prev =>
+                prev.map(c =>
+                  c.targetUserId === p.user_id || c.id === p.user_id
+                    ? { ...c, status: p.status }
+                    : c
+                )
+              );
+            }
+          } else if ((type === 'typing.start' || type === 'typing.stop') && payload) {
+            const tEvt = payload as { user_id: string; channel_id?: string; dm_group_id?: string };
+            if (!tEvt.user_id || tEvt.user_id === currentUserIdRef.current) return;
+            const targetConvId = tEvt.channel_id || tEvt.dm_group_id || '';
+            if (targetConvId !== activeConversationIdRef.current) return;
+
+            if (type === 'typing.start') {
+              const displayName = memberDirectoryRef.current[tEvt.user_id] || 'Team Member';
+              setTypingUsers(prev => ({ ...prev, [tEvt.user_id]: displayName }));
+              if (typingTimersRef.current[tEvt.user_id]) {
+                clearTimeout(typingTimersRef.current[tEvt.user_id]);
+              }
+              typingTimersRef.current[tEvt.user_id] = setTimeout(() => {
+                setTypingUsers(prev => {
+                  if (!prev[tEvt.user_id]) return prev;
+                  const next = { ...prev };
+                  delete next[tEvt.user_id];
+                  return next;
+                });
+                delete typingTimersRef.current[tEvt.user_id];
+              }, 4500);
+            } else {
+              if (typingTimersRef.current[tEvt.user_id]) {
+                clearTimeout(typingTimersRef.current[tEvt.user_id]);
+                delete typingTimersRef.current[tEvt.user_id];
+              }
+              setTypingUsers(prev => {
+                if (!prev[tEvt.user_id]) return prev;
+                const next = { ...prev };
+                delete next[tEvt.user_id];
+                return next;
+              });
+            }
+          } else if (type === 'tunnel.url_updated' && payload) {
+            const tPayload = payload as TunnelConfigPayload;
+            if (tPayload.server_url) {
+              const newHost = tPayload.server_url.replace(/^https?:\/\//, '');
+              setActiveServerBaseUrl(tPayload.server_url);
+              if (newHost && !wsUrl.includes(newHost)) {
+                ws?.close();
+              }
+            }
+          } else if (type === 'session.revoked') {
+            localStorage.removeItem('officechat_access_token');
+            localStorage.removeItem('officechat_refresh_token');
+            setIsAuthenticated(false);
+            setShowAuthModal(true);
+          }
+        } catch {
+          // ignore malformed WS frames
+        }
+      };
+
+      ws.onclose = () => {
+        if (isUnmounted) return;
+        setWsConnected(false);
+        reconnectTimer = setTimeout(async () => {
+          if (isUnmounted) return;
+          // Query permanent tunnel configuration endpoint before reconnecting in case Quick Tunnel URL rotated
+          await discoverLatestTunnelUrl({ forceExternal: true }).catch(() => {});
+          // Also verify/refresh access token via /api/v1/auth/me so expired 15m tokens don't 401 on WS handshake
+          await chatApi.getMe().catch(() => {});
+          if (!isUnmounted) {
+            connectWs();
+          }
+        }, 2500);
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
+    };
+
+    connectWs();
+
+    return () => {
+      isUnmounted = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, [isAuthenticated, activeWorkspaceId, wsReconnectNonce, loadWorkspaceBootstrap, loadConversationHistory]);
+
+  /* Auto-grow composer textarea & emit throttled WebSocket typing indicators */
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setMessageInput(e.target.value);
+    const val = e.target.value;
+    setMessageInput(val);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
     }
+
+    if (
+      wsRef.current &&
+      wsRef.current.readyState === WebSocket.OPEN &&
+      activeConversationId &&
+      !activeConversationId.startsWith('dm_user_')
+    ) {
+      const activeConv = conversations.find(c => c.id === activeConversationId);
+      const isDm = activeConv?.kind === 'dm';
+      if (val.trim().length > 0) {
+        const now = Date.now();
+        if (now - lastTypingSentRef.current >= 1400) {
+          lastTypingSentRef.current = now;
+          wsRef.current.send(
+            JSON.stringify({
+              type: 'typing.start',
+              channel_id: isDm ? undefined : activeConversationId,
+              dm_group_id: isDm ? activeConversationId : undefined,
+            })
+          );
+        }
+      } else if (lastTypingSentRef.current > 0) {
+        lastTypingSentRef.current = 0;
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'typing.stop',
+            channel_id: isDm ? undefined : activeConversationId,
+            dm_group_id: isDm ? activeConversationId : undefined,
+          })
+        );
+      }
+    }
   };
 
-  /* Send or Edit Message */
-  const handleSendMessage = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!messageInput.trim() && composerAttachments.length === 0) return;
+  /* Open Thread Panel & Load Historical Thread Replies via GET /api/v1/messages/{id}/thread */
+  const openThreadForMessage = useCallback(
+    async (msg: Message) => {
+      setActiveThreadMessage(msg);
+      try {
+        const res = await chatApi.listThreadMessages(msg.id, activeWorkspaceId);
+        const mappedReplies = (res.messages || []).map(r => ({
+          id: r.id,
+          sender: mapBackendUser(r.sender),
+          content: r.content,
+          timestamp: formatTime(r.created_at),
+        }));
+        setActiveThreadMessage(prev =>
+          prev && prev.id === msg.id
+            ? { ...prev, replies: mappedReplies, replyCount: mappedReplies.length }
+            : prev
+        );
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === msg.id ? { ...m, replies: mappedReplies, replyCount: mappedReplies.length } : m
+          )
+        );
+      } catch (err) {
+        setChatError(err instanceof Error ? err.message : 'Failed to load thread replies');
+      }
+    },
+    [activeWorkspaceId]
+  );
 
-    /* Handle Editing Existing Message */
-    if (editingMessage) {
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === editingMessage.id
-            ? { ...m, content: messageInput.trim(), isEdited: true }
-            : m
-        )
-      );
-      setEditingMessage(null);
-      setMessageInput('');
-      setComposerAttachments([]);
-      addToast('Message edited successfully', 'success');
+  /* Send or Edit Message via Real Backend API */
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if ((!messageInput.trim() && composerAttachments.length === 0) || isSendingMessage) return;
+
+    if (!isAuthenticated || !activeConversationId) {
+      setShowAuthModal(true);
       return;
     }
 
-    const newMsgId = 'm_' + Date.now();
-    const newMsg: Message = {
-      id: newMsgId,
-      sender: currentUser,
-      content: messageInput.trim(),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      rawDate: 'Today',
-      reactions: [],
-      status: 'sent',
-      replyTo: replyingTo ? {
-        id: replyingTo.id,
-        senderName: replyingTo.sender.name,
-        content: replyingTo.content.slice(0, 80)
-      } : undefined,
-      attachment: composerAttachments.length > 0 ? composerAttachments[0] : undefined,
-      attachments: composerAttachments.length > 0 ? [...composerAttachments] : undefined
-    };
+    if (
+      lastTypingSentRef.current > 0 &&
+      wsRef.current &&
+      wsRef.current.readyState === WebSocket.OPEN &&
+      !activeConversationId.startsWith('dm_user_')
+    ) {
+      const activeConv = conversations.find(c => c.id === activeConversationId);
+      const isDm = activeConv?.kind === 'dm';
+      lastTypingSentRef.current = 0;
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'typing.stop',
+          channel_id: isDm ? undefined : activeConversationId,
+          dm_group_id: isDm ? activeConversationId : undefined,
+        })
+      );
+    }
 
-    setMessages(prev => [...prev, newMsg]);
+    const trimmedContent = messageInput.trim();
+
+    /* Handle Editing Existing Message via PATCH /api/v1/messages/{id} */
+    if (editingMessage) {
+      setIsSendingMessage(true);
+      setChatError(null);
+      try {
+        const updated = await chatApi.updateMessage(editingMessage.id, trimmedContent, activeWorkspaceId);
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === editingMessage.id
+              ? { ...m, content: updated.content, isEdited: true }
+              : m
+          )
+        );
+        setEditingMessage(null);
+        setMessageInput('');
+        setComposerAttachments([]);
+        addToast('Message edited successfully', 'success');
+      } catch (err) {
+        setChatError(err instanceof Error ? err.message : 'Failed to edit message');
+      } finally {
+        setIsSendingMessage(false);
+      }
+      return;
+    }
+
+    const activeConv = conversations.find(c => c.id === activeConversationId);
+    const pendingAttachments = [...composerAttachments];
+    const replyTarget = replyingTo;
+
+    setIsSendingMessage(true);
+    setChatError(null);
     setMessageInput('');
     setComposerAttachments([]);
     setShowEmojiPicker(false);
@@ -685,20 +1180,88 @@ export default function App() {
       textareaRef.current.style.height = 'auto';
     }
 
-    // Update conversation lastMessage
-    const lastMsgSnippet = newMsg.content || (newMsg.attachments && newMsg.attachments.length > 0 ? `📎 ${newMsg.attachments[0].name}` : newMsg.attachment ? `📎 ${newMsg.attachment.name}` : 'Sent an attachment');
-    setConversations(prev =>
-      prev.map(c =>
-        c.name === activeChannel || c.id === activeConversationId
-          ? { ...c, lastMessage: lastMsgSnippet, timestamp: 'Just now' }
-          : c
-      )
-    );
+    try {
+      // 1. Upload any attached files via POST /api/v1/workspaces/{id}/files/upload
+      const uploadedIds: string[] = [];
+      for (const att of pendingAttachments) {
+        if (att.file) {
+          const uploaded = await chatApi.uploadFile(activeWorkspaceId, att.file);
+          uploadedIds.push(uploaded.id);
+        }
+      }
 
-    addToast('Message sent to ' + (activeChannel.startsWith('#') ? activeChannel : '#' + activeChannel), 'info');
+      const contentToSend =
+        trimmedContent ||
+        (pendingAttachments.length > 0 ? `📎 ${pendingAttachments.map(a => a.name).join(', ')}` : '');
+
+      // 2. Ensure real DM group if conversation is a member placeholder
+      let targetConvId = activeConversationId;
+      let targetKind = activeConv?.kind || 'channel';
+      if (activeConv?.id.startsWith('dm_user_') && activeConv.targetUserId) {
+        const dmGroup = await chatApi.getOrCreateDM(activeWorkspaceId, [activeConv.targetUserId]);
+        targetConvId = dmGroup.id;
+        targetKind = 'dm';
+        setActiveConversationId(dmGroup.id);
+        setConversations(prev =>
+          prev.map(c => (c.id === activeConv.id ? { ...c, id: dmGroup.id, kind: 'dm' } : c))
+        );
+      }
+
+      // 3. Send message to backend
+      const createdMsg =
+        targetKind === 'dm'
+          ? await chatApi.sendDMMessage(
+              targetConvId,
+              {
+                content: contentToSend,
+                parent_id: undefined,
+                attachment_ids: uploadedIds.length > 0 ? uploadedIds : undefined,
+              },
+              activeWorkspaceId
+            )
+          : await chatApi.sendChannelMessage(
+              targetConvId,
+              {
+                content: contentToSend,
+                parent_id: undefined,
+                attachment_ids: uploadedIds.length > 0 ? uploadedIds : undefined,
+              },
+              activeWorkspaceId
+            );
+
+      const uiMsg = mapBackendMessage(createdMsg, currentUser.id);
+      if (replyTarget) {
+        uiMsg.replyTo = {
+          id: replyTarget.id,
+          senderName: replyTarget.sender.name,
+          content: replyTarget.content.slice(0, 80),
+        };
+      }
+
+      // Deduplicate against WebSocket message.new broadcast
+      setMessages(prev => (prev.some(m => m.id === uiMsg.id) ? prev : [...prev, uiMsg]));
+
+      const lastMsgSnippet =
+        uiMsg.content ||
+        (uiMsg.attachments && uiMsg.attachments.length > 0
+          ? `📎 ${uiMsg.attachments[0].name}`
+          : 'Sent an attachment');
+
+      setConversations(prev =>
+        prev.map(c =>
+          c.id === targetConvId
+            ? { ...c, lastMessage: lastMsgSnippet, timestamp: uiMsg.timestamp }
+            : c
+        )
+      );
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to send message');
+      setMessageInput(trimmedContent);
+      setComposerAttachments(pendingAttachments);
+    } finally {
+      setIsSendingMessage(false);
+    }
   };
-
-
 
   /* Toggle Pin Conversation */
   const handleTogglePin = (id: string, e: React.MouseEvent) => {
@@ -745,75 +1308,129 @@ export default function App() {
     );
   };
 
-  /* Delete Conversation */
-  const handleDeleteConversation = (id: string, e: React.MouseEvent) => {
+  /* Leave / Remove Conversation */
+  const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const conv = conversations.find(c => c.id === id);
+    if (conv?.kind === 'channel' && !id.startsWith('dm_user_')) {
+      try {
+        await chatApi.leaveChannel(id, activeWorkspaceId);
+      } catch {
+        // ignore if already left
+      }
+    }
     setConversations(prev => prev.filter(c => c.id !== id));
     addToast('Chat removed from workspace', 'warning');
   };
 
-  /* Delete Message */
-  const handleDeleteMessage = (msgId: string) => {
-    setMessages(prev => prev.filter(m => m.id !== msgId));
-    addToast('Message deleted', 'info');
+  /* Delete Message via DELETE /api/v1/messages/{id} */
+  const handleDeleteMessage = async (msgId: string) => {
+    try {
+      await chatApi.deleteMessage(msgId, activeWorkspaceId);
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      addToast('Message deleted', 'info');
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'You can only delete your own messages');
+    }
   };
 
-  /* Forward Message */
-  const handleForwardMessage = useCallback((targetConv: Conversation) => {
-    if (!forwardingMessage) return;
-    const now = new Date();
-    const formattedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const forwardedContent = `↪️ Forwarded: ${forwardingMessage.content}`;
-    const forwardedMsg: Message = {
-      id: 'm_' + now.getTime(),
-      sender: currentUser,
-      content: forwardedContent,
-      timestamp: formattedTime,
-      rawDate: 'Today',
-      reactions: [],
-      status: 'delivered'
-    };
-    setConversations(prev =>
-      prev.map(c =>
-        c.id === targetConv.id
-          ? { ...c, lastMessage: forwardedContent, lastTime: formattedTime }
-          : c
-      )
-    );
-    if (targetConv.id === activeConversationId) {
-      setMessages(prev => [...prev, forwardedMsg]);
-    }
-    setForwardingMessage(null);
-    addToast(`Message forwarded to ${targetConv.name}`, 'success');
-  }, [forwardingMessage, currentUser, activeConversationId, addToast]);
+  /* Forward Message via Real Backend API */
+  const handleForwardMessage = useCallback(
+    async (targetConv: Conversation) => {
+      if (!forwardingMessage) return;
+      const forwardedContent = `↪️ Forwarded: ${forwardingMessage.content}`;
+      try {
+        let targetId = targetConv.id;
+        let kind = targetConv.kind || (targetConv.isGroup ? 'channel' : 'dm');
+        if (targetId.startsWith('dm_user_') && targetConv.targetUserId) {
+          const dm = await chatApi.getOrCreateDM(activeWorkspaceId, [targetConv.targetUserId]);
+          targetId = dm.id;
+          kind = 'dm';
+        }
+        const created =
+          kind === 'dm'
+            ? await chatApi.sendDMMessage(targetId, { content: forwardedContent }, activeWorkspaceId)
+            : await chatApi.sendChannelMessage(targetId, { content: forwardedContent }, activeWorkspaceId);
 
-  /* Send thread reply */
-  const handleSendThreadReply = () => {
-    if (!threadReplyInput.trim() || !activeThreadMessage) return;
-    const newReply = {
-      id: 'r_' + Date.now(),
-      sender: currentUser,
-      content: threadReplyInput.trim(),
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
+        const uiMsg = mapBackendMessage(created, currentUser.id);
+        setConversations(prev =>
+          prev.map(c =>
+            c.id === targetConv.id || c.id === targetId
+              ? { ...c, id: targetId, lastMessage: forwardedContent, timestamp: uiMsg.timestamp }
+              : c
+          )
+        );
+        if (targetId === activeConversationId) {
+          setMessages(prev => (prev.some(m => m.id === uiMsg.id) ? prev : [...prev, uiMsg]));
+        }
+        setForwardingMessage(null);
+        addToast(`Message forwarded to ${targetConv.name}`, 'success');
+      } catch (err) {
+        setChatError(err instanceof Error ? err.message : 'Failed to forward message');
+      }
+    },
+    [forwardingMessage, activeWorkspaceId, currentUser.id, activeConversationId, addToast]
+  );
 
-    setMessages(prev =>
-      prev.map(m => {
-        if (m.id !== activeThreadMessage.id) return m;
-        return {
-          ...m,
-          replies: [...(m.replies || []), newReply]
-        };
-      })
-    );
-
-    setActiveThreadMessage(prev => prev ? {
-      ...prev,
-      replies: [...(prev.replies || []), newReply]
-    } : null);
-
+  /* Send thread reply via POST /api/v1/channels/{id}/messages or /dms/{id}/messages with parent_id */
+  const handleSendThreadReply = async () => {
+    if (!threadReplyInput.trim() || !activeThreadMessage || !activeConversationId) return;
+    const content = threadReplyInput.trim();
     setThreadReplyInput('');
-    addToast('Reply added to thread', 'info');
+
+    try {
+      const activeConv = conversations.find(c => c.id === activeConversationId);
+      const created =
+        activeConv?.kind === 'dm'
+          ? await chatApi.sendDMMessage(
+              activeConversationId,
+              { content, parent_id: activeThreadMessage.id },
+              activeWorkspaceId
+            )
+          : await chatApi.sendChannelMessage(
+              activeConversationId,
+              { content, parent_id: activeThreadMessage.id },
+              activeWorkspaceId
+            );
+
+      const newReply = {
+        id: created.id,
+        sender: mapBackendUser(created.sender),
+        content: created.content,
+        timestamp: formatTime(created.created_at),
+      };
+
+      setMessages(prev =>
+        prev.map(m => {
+          if (m.id !== activeThreadMessage.id) return m;
+          const existing = m.replies || [];
+          if (existing.some(r => r.id === newReply.id)) return m;
+          const nextReplies = [...existing, newReply];
+          return {
+            ...m,
+            replyCount: Math.max((m.replyCount || 0) + 1, nextReplies.length),
+            replies: nextReplies,
+          };
+        })
+      );
+
+      setActiveThreadMessage(prev => {
+        if (!prev) return null;
+        const existing = prev.replies || [];
+        if (existing.some(r => r.id === newReply.id)) return prev;
+        const nextReplies = [...existing, newReply];
+        return {
+          ...prev,
+          replyCount: Math.max((prev.replyCount || 0) + 1, nextReplies.length),
+          replies: nextReplies,
+        };
+      });
+
+      addToast('Reply added to thread', 'info');
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to send thread reply');
+      setThreadReplyInput(content);
+    }
   };
 
   /* Real File Selection Handler */
@@ -825,12 +1442,7 @@ export default function App() {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const isImg = file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name);
-      const formattedSize = file.size < 1024
-        ? `${file.size} B`
-        : file.size < 1024 * 1024
-        ? `${(file.size / 1024).toFixed(1)} KB`
-        : `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-
+      const formattedSize = formatBytes(file.size);
       const fileUrl = URL.createObjectURL(file);
 
       newAttachments.push({
@@ -839,13 +1451,13 @@ export default function App() {
         size: formattedSize,
         type: file.type || (isImg ? 'image/png' : 'application/octet-stream'),
         url: fileUrl,
-        file: file
+        file: file,
       });
     }
 
     setComposerAttachments(prev => [...prev, ...newAttachments]);
     addToast(`Attached ${newAttachments.length} file(s)`, 'success');
-    e.target.value = ''; // reset so same file can be picked again
+    e.target.value = '';
   };
 
   /* Download attachment helper */
@@ -862,137 +1474,187 @@ export default function App() {
     }
   };
 
-  /* Reaction toggle */
-  const handleToggleReaction = (msgId: string, emoji: string) => {
-    let feedbackToast = '';
-    setMessages(prev =>
-      prev.map(msg => {
-        if (msg.id !== msgId) return msg;
-        const reactions = msg.reactions || [];
-        const existing = reactions.find(r => r.emoji === emoji);
-        if (existing) {
-          const userReacted = existing.users.includes(currentUser.name);
-          const updatedUsers = userReacted
-            ? existing.users.filter(u => u !== currentUser.name)
-            : [...existing.users, currentUser.name];
-          const newCount = userReacted ? existing.count - 1 : existing.count + 1;
-          feedbackToast = userReacted ? `Removed reaction ${emoji}` : `Reacted with ${emoji}`;
+  /* Reaction toggle via POST/DELETE /api/v1/messages/{id}/reactions */
+  const handleToggleReaction = async (msgId: string, emoji: string) => {
+    const targetMsg = messages.find(m => m.id === msgId);
+    if (!targetMsg) return;
 
-          if (newCount <= 0) {
-            return {
-              ...msg,
-              reactions: reactions.filter(r => r.emoji !== emoji)
-            };
-          }
-
-          return {
-            ...msg,
-            reactions: reactions.map(r =>
-              r.emoji === emoji ? { ...r, count: newCount, users: updatedUsers } : r
-            )
-          };
-        } else {
-          feedbackToast = `Reacted with ${emoji}`;
-          return {
-            ...msg,
-            reactions: [...reactions, { emoji, count: 1, users: [currentUser.name] }]
-          };
-        }
-      })
+    const existing = (targetMsg.reactions || []).find(r => r.emoji === emoji);
+    const hasReacted = Boolean(
+      existing && (existing.users.includes(currentUser.id) || existing.users.includes(currentUser.name))
     );
-    if (feedbackToast) {
-      addToast(feedbackToast, 'success');
+
+    try {
+      if (hasReacted) {
+        await chatApi.removeReaction(msgId, emoji, activeWorkspaceId);
+        setMessages(prev =>
+          prev.map(m => {
+            if (m.id !== msgId) return m;
+            return {
+              ...m,
+              reactions: (m.reactions || [])
+                .map(r =>
+                  r.emoji === emoji
+                    ? {
+                        ...r,
+                        count: Math.max(0, r.count - 1),
+                        users: r.users.filter(u => u !== currentUser.id && u !== currentUser.name),
+                      }
+                    : r
+                )
+                .filter(r => r.count > 0),
+            };
+          })
+        );
+      } else {
+        await chatApi.addReaction(msgId, emoji, activeWorkspaceId);
+        setMessages(prev =>
+          prev.map(m => {
+            if (m.id !== msgId) return m;
+            const list = m.reactions || [];
+            const found = list.find(r => r.emoji === emoji);
+            if (found) {
+              if (found.users.includes(currentUser.id)) return m;
+              return {
+                ...m,
+                reactions: list.map(r =>
+                  r.emoji === emoji
+                    ? { ...r, count: r.count + 1, users: [...r.users, currentUser.id] }
+                    : r
+                ),
+              };
+            }
+            return {
+              ...m,
+              reactions: [...list, { emoji, count: 1, users: [currentUser.id] }],
+            };
+          })
+        );
+      }
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to update reaction');
     }
   };
 
-  /* Vote on poll */
-  const handleVotePoll = (msgId: string, optionId: string) => {
-    setMessages(prev =>
-      prev.map(msg => {
-        if (msg.id !== msgId || !msg.poll) return msg;
-        const currentVoted = msg.poll.userVoted;
-        if (currentVoted === optionId) return msg; // Already voted
+  /* Vote on poll via POST /api/v1/polls/{id}/vote */
+  const handleVotePoll = async (msgId: string, optionId: string) => {
+    const targetMsg = messages.find(m => m.id === msgId);
+    if (!targetMsg?.poll) return;
 
-        const updatedOptions = msg.poll.options.map(opt => {
-          if (opt.id === optionId) {
-            return {
-              ...opt,
-              votes: opt.votes + 1,
-              voterAvatars: [...(opt.voterAvatars || []), currentUser.avatar]
-            };
-          }
-          if (opt.id === currentVoted) {
-            return {
-              ...opt,
-              votes: Math.max(0, opt.votes - 1),
-              voterAvatars: (opt.voterAvatars || []).filter(a => a !== currentUser.avatar)
-            };
-          }
-          return opt;
-        });
-
-        const newTotal = currentVoted ? msg.poll.totalVotes : msg.poll.totalVotes + 1;
-
-        return {
-          ...msg,
-          poll: {
-            ...msg.poll,
-            options: updatedOptions,
-            totalVotes: newTotal,
-            userVoted: optionId
-          }
-        };
-      })
-    );
-    addToast('Vote recorded successfully', 'success');
+    try {
+      const updatedPoll = await chatApi.votePoll(targetMsg.poll.id, optionId, activeWorkspaceId);
+      const uiPoll = mapBackendPoll(updatedPoll);
+      setMessages(prev => prev.map(m => (m.id === msgId ? { ...m, poll: uiPoll } : m)));
+      addToast('Vote recorded successfully', 'success');
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to cast poll vote');
+    }
   };
 
-  /* Create Task from message */
-  const handleCreateTaskFromMsg = (msg: Message) => {
-    const newTask: Task = {
-      id: 't_' + Date.now(),
-      title: msg.content.slice(0, 60) + (msg.content.length > 60 ? '...' : ''),
-      status: 'todo',
-      assignedTo: currentUser.name,
-      dueDate: 'Tomorrow',
-      channel: `#${activeChannel}`
-    };
-    setTasks(prev => [newTask, ...prev]);
-    addToast('Task created from message', 'success');
+  /* Create Task from message via POST /api/v1/tasks */
+  const handleCreateTaskFromMsg = async (msg: Message) => {
+    const title = msg.content.slice(0, 80) + (msg.content.length > 80 ? '...' : '');
+    try {
+      const created = await chatApi.createTask({
+        workspace_id: activeWorkspaceId,
+        title,
+        message_id: msg.id,
+        assigned_to: currentUser.id || undefined,
+      });
+      const uiTask = mapBackendTask(created);
+      setTasks(prev => (prev.some(t => t.id === uiTask.id) ? prev : [uiTask, ...prev]));
+      addToast('Task created from message', 'success');
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to create task from message');
+    }
   };
 
-  /* Create new Poll */
-  const handleCreatePoll = () => {
-    if (!pollQuestion.trim()) return;
-    const filteredOptions = pollOptions.filter(o => o.trim() !== '');
+  /* Create standalone Task via POST /api/v1/tasks */
+  const handleCreateStandaloneTask = async () => {
+    if (!newTaskTitle.trim()) return;
+    try {
+      const created = await chatApi.createTask({
+        workspace_id: activeWorkspaceId,
+        title: newTaskTitle.trim(),
+        assigned_to: currentUser.id || undefined,
+      });
+      const uiTask = mapBackendTask(created);
+      setTasks(prev => (prev.some(t => t.id === uiTask.id) ? prev : [uiTask, ...prev]));
+      setNewTaskTitle('');
+      setShowTaskModal(false);
+      addToast('Task created and added to board', 'success');
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to create task');
+    }
+  };
+
+  /* Update Task Status via PATCH /api/v1/tasks/{id} or POST /api/v1/tasks/{id}/complete */
+  const handleUpdateTaskStatus = async (taskId: string, nextStatus: 'todo' | 'in_progress' | 'done') => {
+    try {
+      const updated =
+        nextStatus === 'done'
+          ? await chatApi.completeTask(taskId, activeWorkspaceId)
+          : await chatApi.updateTask(taskId, { status: nextStatus }, activeWorkspaceId);
+      const uiTask = mapBackendTask(updated);
+      setTasks(prev => prev.map(t => (t.id === taskId ? uiTask : t)));
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to update task status');
+    }
+  };
+
+  /* Create new Poll via POST /api/v1/channels/{id}/messages + POST /api/v1/polls */
+  const handleCreatePoll = async () => {
+    if (!pollQuestion.trim() || !activeConversationId) return;
+    const filteredOptions = pollOptions.map(o => o.trim()).filter(o => o !== '');
     if (filteredOptions.length < 2) return;
 
-    const newMsg: Message = {
-      id: 'm_' + Date.now(),
-      sender: currentUser,
-      content: `📊 Team Poll: **${pollQuestion}**`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      rawDate: 'Today',
-      reactions: [],
-      poll: {
-        id: 'p_' + Date.now(),
-        question: pollQuestion,
-        options: filteredOptions.map((text, idx) => ({
-          id: 'opt_' + idx,
-          text,
-          votes: 0,
-          voterAvatars: []
-        })),
-        totalVotes: 0,
-        deadline: 'Active • Closes tomorrow'
-      }
-    };
+    const activeConv = conversations.find(c => c.id === activeConversationId);
+    const isDm = activeConv?.kind === 'dm';
 
-    setMessages(prev => [...prev, newMsg]);
-    setShowPollModal(false);
-    setPollQuestion('');
-    setPollOptions(['Option 1', 'Option 2']);
-    addToast('New poll posted to channel', 'success');
+    try {
+      // 1. Create the host message in the channel or DM
+      const hostMsg = isDm
+        ? await chatApi.sendDMMessage(
+            activeConversationId,
+            { content: `📊 Team Poll: **${pollQuestion.trim()}**` },
+            activeWorkspaceId
+          )
+        : await chatApi.sendChannelMessage(
+            activeConversationId,
+            { content: `📊 Team Poll: **${pollQuestion.trim()}**` },
+            activeWorkspaceId
+          );
+
+      // 2. Create the poll linked to hostMsg.id
+      const createdPoll = await chatApi.createPoll(
+        {
+          question: pollQuestion.trim(),
+          options: filteredOptions,
+          channel_id: isDm ? undefined : activeConversationId,
+          dm_group_id: isDm ? activeConversationId : undefined,
+          message_id: hostMsg.id,
+        },
+        activeWorkspaceId
+      );
+
+      const uiMsg = mapBackendMessage(hostMsg, currentUser.id);
+      uiMsg.poll = mapBackendPoll(createdPoll);
+
+      setMessages(prev => {
+        const exists = prev.some(m => m.id === uiMsg.id);
+        if (exists) {
+          return prev.map(m => (m.id === uiMsg.id ? uiMsg : m));
+        }
+        return [...prev, uiMsg];
+      });
+
+      setShowPollModal(false);
+      setPollQuestion('');
+      setPollOptions(['Option 1', 'Option 2']);
+      addToast('New poll posted to channel', 'success');
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to create poll');
+    }
   };
 
   /* Copy Code Snippet */
@@ -1001,7 +1663,21 @@ export default function App() {
     addToast('Code snippet copied to clipboard', 'info');
   };
 
-  /* Auth submission (connected to Go REST backend) */
+  /* Manual Retry for Tunnel Discovery & Reconnection */
+  const handleRetryTunnelConnection = async () => {
+    setChatError(null);
+    const newUrl = await discoverLatestTunnelUrl({ forceExternal: true }).catch(() => null);
+    setWsReconnectNonce(prev => prev + 1);
+    if (isAuthenticated) {
+      await loadWorkspaceBootstrap();
+      if (activeConversationIdRef.current) {
+        await loadConversationHistory(activeConversationIdRef.current);
+      }
+    }
+    return newUrl;
+  };
+
+  /* Auth submission (connected to Go REST backend with automatic tunnel discovery retry) */
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthMessage('Connecting to OfficeChat API...');
@@ -1010,14 +1686,35 @@ export default function App() {
     const payload =
       authMode === 'login'
         ? { email: authEmail, password: authPassword }
-        : { email: authEmail, password: authPassword, full_name: authFullName, display_name: authFullName.split(' ')[0] };
+        : {
+            email: authEmail,
+            password: authPassword,
+            full_name: authFullName,
+            display_name: authFullName.split(' ')[0] || authFullName,
+          };
 
     try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      let res: Response;
+      try {
+        res = await fetch(resolveApiUrl(endpoint), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(payload),
+        });
+        if (res.status === 502 || res.status === 503 || res.status === 530) {
+          throw new Error(`Tunnel status ${res.status}`);
+        }
+      } catch {
+        setAuthMessage('Tunnel URL changed — discovering latest OfficeChat server URL...');
+        await discoverLatestTunnelUrl({ forceExternal: true });
+        res = await fetch(resolveApiUrl(endpoint), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(payload),
+        });
+      }
       const data = await res.json();
       if (!res.ok) {
         setAuthMessage(data.error?.message || 'Authentication failed');
@@ -1029,23 +1726,13 @@ export default function App() {
         if (data.refresh_token) {
           localStorage.setItem('officechat_refresh_token', data.refresh_token);
         }
-        if (data.user) {
-          setCurrentUser({
-            id: data.user.id,
-            name: data.user.full_name || data.user.display_name,
-            handle: '@' + (data.user.display_name || 'user').toLowerCase(),
-            role: data.user.role === 'user' ? 'Owner' : (data.user.role || 'Owner'),
-            status: data.user.status || 'online',
-            customStatus: data.user.customStatus || 'Active',
-            avatar: data.user.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80'
-          });
-        }
-        addToast(`Signed in as ${data.user?.full_name || 'Admin'}`, 'success');
+        setIsAuthenticated(true);
         setShowAuthModal(false);
+        setAuthPassword('');
+        await loadWorkspaceBootstrap();
       }
     } catch {
-      setAuthMessage('API connected. Session active.');
-      setShowAuthModal(false);
+      setAuthMessage('Error: Could not connect to the OfficeChat server. Click Retry after starting the tunnel.');
     }
   };
 
@@ -1053,28 +1740,41 @@ export default function App() {
   const openSettingsModal = (tab: 'account' | 'notifications' | 'theme' | 'backup' = 'account') => {
     setSettingsTab(tab);
     setAccountName(currentUser.name);
-    setAccountEmail(currentUser.email || 'admin@officechat.local');
-    setAccountTeam(currentUser.team || 'Core Architecture');
+    setAccountEmail(currentUser.email || '');
+    setAccountTeam(currentUser.team || 'Engineering');
     setAccountRole(currentUser.role);
     setCustomStatusInput(currentUser.customStatus || '');
     setIsDndActive(currentUser.status === 'dnd');
     setShowStatusModal(true);
   };
 
-  /* Save Settings Changes */
-  const handleSaveSettings = () => {
-    const updatedStatus: User['status'] = isDndActive ? 'dnd' : currentUser.status === 'dnd' ? 'online' : currentUser.status;
-    setCurrentUser(prev => ({
-      ...prev,
-      name: accountName,
-      email: accountEmail,
-      team: accountTeam,
-      role: accountRole,
-      customStatus: customStatusInput,
-      status: updatedStatus
-    }));
-    setShowStatusModal(false);
-    addToast('Account preferences and settings saved', 'success');
+  /* Save Settings Changes via PATCH /api/v1/auth/me */
+  const handleSaveSettings = async () => {
+    const updatedStatus: User['status'] = isDndActive
+      ? 'dnd'
+      : currentUser.status === 'dnd'
+      ? 'online'
+      : currentUser.status;
+    try {
+      const updatedUser = await chatApi.updateProfile({
+        full_name: accountName,
+        status: updatedStatus,
+        custom_status: customStatusInput,
+      });
+      setCurrentUser(prev => ({
+        ...prev,
+        name: updatedUser.full_name || accountName,
+        email: updatedUser.email || accountEmail,
+        team: accountTeam,
+        role: accountRole,
+        customStatus: updatedUser.custom_status || customStatusInput,
+        status: normalizeStatus(updatedUser.status || updatedStatus),
+      }));
+      setShowStatusModal(false);
+      addToast('Account preferences and settings saved', 'success');
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to save profile settings');
+    }
   };
 
   /* Send Chat Backup to Email */
@@ -1095,12 +1795,12 @@ export default function App() {
         name: currentUser.name,
         email: accountEmail,
         team: accountTeam,
-        role: accountRole
+        role: accountRole,
       },
       settings: {
         theme,
         dnd: isDndActive,
-        mute: isMuteActive
+        mute: isMuteActive,
       },
       channel: activeChannel,
       totalMessages: messages.length,
@@ -1111,9 +1811,9 @@ export default function App() {
         content: m.content,
         timestamp: m.timestamp,
         reactions: m.reactions,
-        poll: m.poll
+        poll: m.poll,
       })),
-      tasks: tasks
+      tasks: tasks,
     };
 
     const blob = new Blob([JSON.stringify(backupPayload, null, 2)], { type: 'application/json' });
@@ -1128,9 +1828,100 @@ export default function App() {
     addToast('Downloaded chat backup JSON archive', 'success');
   };
 
+  /* Change authenticated user password */
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentPasswordInput || !newPasswordInput) {
+      setPasswordChangeStatus({ text: 'Please enter both current and new password', success: false });
+      return;
+    }
+    if (newPasswordInput.length < 8) {
+      setPasswordChangeStatus({ text: 'New password must be at least 8 characters long', success: false });
+      return;
+    }
+    if (newPasswordInput !== confirmPasswordInput) {
+      setPasswordChangeStatus({ text: 'New password and confirmation do not match', success: false });
+      return;
+    }
+    setIsChangingPassword(true);
+    setPasswordChangeStatus(null);
+    try {
+      const res = await chatApi.changePassword(currentPasswordInput, newPasswordInput);
+      setPasswordChangeStatus({ text: res.message || 'Password updated successfully!', success: true });
+      setCurrentPasswordInput('');
+      setNewPasswordInput('');
+      setConfirmPasswordInput('');
+      addToast('Password updated successfully', 'success');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Failed to update password';
+      setPasswordChangeStatus({ text: errMsg, success: false });
+      addToast(errMsg, 'error');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  /* Create new Channel */
+  const handleCreateChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = newChannelName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    if (!cleanName) {
+      addToast('Please enter a valid channel name', 'warning');
+      return;
+    }
+    if (!activeWorkspaceId) {
+      addToast('No active workspace selected', 'error');
+      return;
+    }
+    setIsCreatingChannel(true);
+    try {
+      const created = await chatApi.createChannel(activeWorkspaceId, {
+        name: cleanName,
+        description: newChannelDesc.trim() || undefined,
+        is_private: newChannelIsPrivate,
+      });
+      addToast(`Channel #${created.name} created!`, 'success');
+      setShowCreateChannelModal(false);
+      setNewChannelName('');
+      setNewChannelDesc('');
+      setNewChannelIsPrivate(false);
+      await loadWorkspaceBootstrap();
+      setActiveConversationId(created.id);
+      setActiveChannel(created.name);
+      setActiveTab('chat');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to create channel';
+      addToast(msg, 'error');
+    } finally {
+      setIsCreatingChannel(false);
+    }
+  };
+
+  /* Debounced backend search for Command Palette */
+  useEffect(() => {
+    if (!showCommandPalette || !activeWorkspaceId || searchQuery.trim().length < 2) {
+      setSearchResults({ messages: [], attachments: [] });
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const handler = setTimeout(async () => {
+      try {
+        const results = await chatApi.searchWorkspace(activeWorkspaceId, searchQuery.trim());
+        setSearchResults(results);
+      } catch {
+        setSearchResults({ messages: [], attachments: [] });
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(handler);
+  }, [searchQuery, showCommandPalette, activeWorkspaceId]);
+
   /* Format content with mentions and markdown bold */
   const renderMessageContent = (text: string) => {
-    // Replace @mentions with chip elements
     const parts = text.split(/(@\w+)/g);
     return parts.map((part, i) => {
       if (part.startsWith('@')) {
@@ -1140,13 +1931,18 @@ export default function App() {
           </span>
         );
       }
-      // Simple bold formatting
       if (part.includes('**')) {
         const subParts = part.split('**');
         return (
           <span key={i}>
             {subParts.map((sub, j) =>
-              j % 2 === 1 ? <strong key={j} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{sub}</strong> : sub
+              j % 2 === 1 ? (
+                <strong key={j} style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
+                  {sub}
+                </strong>
+              ) : (
+                sub
+              )
             )}
           </span>
         );
@@ -1155,13 +1951,9 @@ export default function App() {
     });
   };
 
-  const channels = [
-    { id: 'general', name: 'general', isPrivate: false, unread: 0 },
-    { id: 'announcements', name: 'announcements', isPrivate: false, unread: 2 },
-    { id: 'dev-team', name: 'dev-team', isPrivate: true, unread: 0 },
-    { id: 'product', name: 'product', isPrivate: false, unread: 0 },
-    { id: 'random', name: 'random', isPrivate: false, unread: 0 }
-  ];
+  const channels = conversations
+    .filter(c => c.kind === 'channel' && !c.isArchived)
+    .map(c => ({ id: c.id, name: c.name, isPrivate: Boolean(c.isPrivate), unread: c.unreadCount }));
 
 
 
@@ -1207,9 +1999,9 @@ export default function App() {
               <span>{activeWorkspace}</span>
               <ChevronDown size={14} color="var(--text-muted)" />
             </div>
-            <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
-              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'var(--success)' }} />
-              Live REST & WebSocket
+            <div style={{ fontSize: 'var(--text-2xs)', color: wsConnected ? 'var(--success)' : 'var(--warning)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
+              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: wsConnected ? 'var(--success)' : 'var(--warning)' }} />
+              {wsConnected ? 'Live REST & WebSocket' : 'Connecting WebSocket...'}
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1239,6 +2031,28 @@ export default function App() {
                 <span>Admin</span>
               </button>
             )}
+            <button
+              onClick={() => setShowCreateChannelModal(true)}
+              data-tooltip="Create Channel"
+              title="Create Channel"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '4px 8px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--surface-hover)',
+                border: '1px solid var(--border-default)',
+                color: 'var(--text-primary)',
+                fontSize: 'var(--text-xs)',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all var(--transition-fast)'
+              }}
+            >
+              <Plus size={14} />
+              <span>Channel</span>
+            </button>
             <button
               onClick={() => openSettingsModal('account')}
               data-tooltip="Workspace Settings"
@@ -1455,13 +2269,7 @@ export default function App() {
                 <div
                   key={c.id}
                   className={`chat-row ${isActive ? 'active' : ''}`}
-                  onClick={() => {
-                    setActiveConversationId(c.id);
-                    setActiveChannel(c.name);
-                    setActiveTab('chat');
-                    setIsMobileMenuOpen(false);
-                    setConversations(prev => prev.map(conv => conv.id === c.id ? { ...conv, unreadCount: 0 } : conv));
-                  }}
+                  onClick={() => handleSelectConversation(c)}
                 >
                   {/* Avatar */}
                   <div style={{ position: 'relative', width: '38px', height: '38px', flexShrink: 0 }}>
@@ -1837,6 +2645,68 @@ export default function App() {
               <span>New Task</span>
             </button>
 
+            {/* Live Tunnel / Server Connection Status Pill */}
+            <button
+              type="button"
+              onClick={handleRetryTunnelConnection}
+              data-tooltip={
+                tunnelState?.activeServerUrl
+                  ? `Server: ${tunnelState.activeServerUrl} (Click to verify/reconnect)`
+                  : wsConnected
+                  ? 'Live WebSocket Connected (Click to verify tunnel)'
+                  : 'Reconnecting — Click to discover latest Quick Tunnel URL'
+              }
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '4px 9px',
+                borderRadius: 'var(--radius-full)',
+                background: wsConnected
+                  ? 'rgba(16, 185, 129, 0.12)'
+                  : tunnelState?.status === 'discovering' || tunnelState?.status === 'reconnecting'
+                  ? 'rgba(245, 158, 11, 0.15)'
+                  : 'rgba(239, 68, 68, 0.14)',
+                border: wsConnected
+                  ? '1px solid rgba(16, 185, 129, 0.35)'
+                  : tunnelState?.status === 'discovering' || tunnelState?.status === 'reconnecting'
+                  ? '1px solid rgba(245, 158, 11, 0.4)'
+                  : '1px solid rgba(239, 68, 68, 0.35)',
+                color: wsConnected
+                  ? 'var(--success)'
+                  : tunnelState?.status === 'discovering' || tunnelState?.status === 'reconnecting'
+                  ? 'var(--warning)'
+                  : 'var(--danger)',
+                fontSize: 'var(--text-2xs)',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: wsConnected
+                    ? 'var(--success)'
+                    : tunnelState?.status === 'discovering' || tunnelState?.status === 'reconnecting'
+                    ? 'var(--warning)'
+                    : 'var(--danger)'
+                }}
+              />
+              <span>
+                {wsConnected
+                  ? 'Connected'
+                  : tunnelState?.status === 'discovering'
+                  ? 'Updating Tunnel URL...'
+                  : tunnelState?.status === 'reconnecting'
+                  ? 'Reconnecting...'
+                  : isAuthenticated
+                  ? 'Offline • Retry'
+                  : 'Sign In'}
+              </span>
+            </button>
+
             {/* Member count pill */}
             <div
               style={{
@@ -1852,7 +2722,7 @@ export default function App() {
               }}
             >
               <Users size={13} />
-              <span>24</span>
+              <span>{conversations.filter(c => c.kind === 'dm').length + 1}</span>
             </div>
 
             {/* DND Status Indicator Pill (if active) */}
@@ -1968,6 +2838,114 @@ export default function App() {
                   gap: 'var(--space-1)'
                 }}
               >
+                {/* Tunnel Connection Status & Auto-Discovery Banner */}
+                {isAuthenticated && (!wsConnected || tunnelState?.status === 'discovering' || tunnelState?.status === 'reconnecting' || tunnelState?.status === 'error') && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '10px',
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      background:
+                        tunnelState?.status === 'error'
+                          ? 'rgba(239, 68, 68, 0.12)'
+                          : 'rgba(245, 158, 11, 0.14)',
+                      border:
+                        tunnelState?.status === 'error'
+                          ? '1px solid rgba(239, 68, 68, 0.35)'
+                          : '1px solid rgba(245, 158, 11, 0.4)',
+                      color:
+                        tunnelState?.status === 'error'
+                          ? 'var(--danger)'
+                          : 'var(--warning)',
+                      fontSize: 'var(--text-xs)',
+                      fontWeight: 600,
+                      marginBottom: '8px'
+                    }}
+                  >
+                    <span>
+                      {tunnelState?.status === 'discovering'
+                        ? 'Cloudflare Quick Tunnel changed — fetching the latest OfficeChat server URL automatically...'
+                        : tunnelState?.status === 'reconnecting'
+                        ? `Reconnecting to latest tunnel URL (${tunnelState.activeServerUrl || 'same-origin'})...`
+                        : tunnelState?.errorMessage
+                        ? tunnelState.errorMessage
+                        : 'Live connection interrupted — checking for updated Quick Tunnel URL and reconnecting...'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleRetryTunnelConnection}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        background: 'var(--surface-level-2)',
+                        border: '1px solid var(--border-default)',
+                        color: 'var(--text-primary)',
+                        fontSize: 'var(--text-2xs)',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Retry Now
+                    </button>
+                  </div>
+                )}
+
+                {/* Error & Loading State Banners */}
+                {chatError && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'rgba(239, 68, 68, 0.12)',
+                      border: '1px solid rgba(239, 68, 68, 0.35)',
+                      color: 'var(--danger)',
+                      fontSize: 'var(--text-xs)',
+                      fontWeight: 600,
+                      marginBottom: '8px'
+                    }}
+                  >
+                    <span>{chatError}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={handleRetryTunnelConnection}
+                        style={{
+                          padding: '3px 8px',
+                          borderRadius: 'var(--radius-xs)',
+                          background: 'var(--surface-level-2)',
+                          border: '1px solid rgba(239, 68, 68, 0.35)',
+                          color: 'var(--danger)',
+                          fontSize: 'var(--text-2xs)',
+                          fontWeight: 700,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Retry
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setChatError(null)}
+                        style={{ color: 'var(--danger)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {isLoadingMessages && (
+                  <div style={{ textAlign: 'center', padding: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                    Loading conversation history...
+                  </div>
+                )}
+
                 {/* Date Divider: Today */}
                 <div style={{ display: 'flex', alignItems: 'center', margin: 'var(--space-3) 0' }}>
                   <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
@@ -2109,7 +3087,7 @@ export default function App() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setActiveThreadMessage(msg)}
+                              onClick={() => openThreadForMessage(msg)}
                               data-tooltip="Reply in Thread"
                               style={{ padding: '3px 5px', color: 'var(--text-secondary)' }}
                             >
@@ -2475,7 +3453,7 @@ export default function App() {
                           {msg.reactions && msg.reactions.length > 0 && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
                               {msg.reactions.map((r, idx) => {
-                                const hasReacted = r.users.includes(currentUser.name);
+                                const hasReacted = r.users.includes(currentUser.id) || r.users.includes(currentUser.name);
                                 return (
                                   <button
                                     key={idx}
@@ -2530,6 +3508,38 @@ export default function App() {
                             </div>
                           )}
 
+                          {/* Thread Replies Badge */}
+                          {((msg.replies && msg.replies.length > 0) || (msg.replyCount && msg.replyCount > 0)) && (
+                            <div style={{ marginTop: '6px' }}>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openThreadForMessage(msg);
+                                }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '5px',
+                                  padding: '2px 8px',
+                                  borderRadius: 'var(--radius-full)',
+                                  background: isSent ? 'rgba(0, 0, 0, 0.22)' : 'var(--primary-subtle)',
+                                  border: isSent ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid var(--primary-border)',
+                                  color: isSent ? '#ffffff' : 'var(--primary)',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                <MessageSquare size={11} />
+                                <span>
+                                  {Math.max(msg.replies?.length || 0, msg.replyCount || 0)}{' '}
+                                  {Math.max(msg.replies?.length || 0, msg.replyCount || 0) === 1 ? 'reply' : 'replies'}
+                                </span>
+                              </button>
+                            </div>
+                          )}
+
                           {/* Bubble Meta Footer: Timestamp & Delivery Status Ticks */}
                           <div className="bubble-meta">
                             <span>{msg.timestamp}</span>
@@ -2567,6 +3577,35 @@ export default function App() {
                   States: typing, replying preview, editing preview
                   ================================================================ */}
               <div style={{ padding: '0 var(--space-6) var(--space-4) var(--space-6)' }}>
+                {/* Live Typing Indicator Bar */}
+                {Object.values(typingUsers).length > 0 && (
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: 'var(--primary)',
+                      fontWeight: 600,
+                      padding: '2px 6px 6px 6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: '6px',
+                        height: '6px',
+                        borderRadius: '50%',
+                        background: 'var(--primary)',
+                        display: 'inline-block'
+                      }}
+                    />
+                    <span>
+                      {Object.values(typingUsers).join(', ')}{' '}
+                      {Object.values(typingUsers).length === 1 ? 'is typing...' : 'are typing...'}
+                    </span>
+                  </div>
+                )}
+
                 {/* Replying Preview Banner */}
                 {replyingTo && (
                   <div className="composer-preview-banner">
@@ -2847,11 +3886,11 @@ export default function App() {
                       <div style={{ display: 'flex', alignItems: 'center' }}>
                         <button
                           type="submit"
-                          disabled={!messageInput.trim() && composerAttachments.length === 0}
-                          className={messageInput.trim() || composerAttachments.length > 0 ? 'send-btn-primary' : 'send-btn-disabled'}
-                          data-tooltip="Send message (Enter)"
+                          disabled={isSendingMessage || (!messageInput.trim() && composerAttachments.length === 0)}
+                          className={!isSendingMessage && (messageInput.trim() || composerAttachments.length > 0) ? 'send-btn-primary' : 'send-btn-disabled'}
+                          data-tooltip={isSendingMessage ? 'Sending...' : 'Send message (Enter)'}
                         >
-                          <Send size={15} style={{ transform: 'translateX(1px)' }} />
+                          <Send size={15} style={{ transform: 'translateX(1px)', opacity: isSendingMessage ? 0.5 : 1 }} />
                         </button>
                       </div>
                     </div>
@@ -3067,10 +4106,7 @@ export default function App() {
                         <span>Due {task.dueDate}</span>
                       </div>
                       <button
-                        onClick={() => {
-                          setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'in_progress' } : t));
-                          addToast('Task moved to In Progress', 'info');
-                        }}
+                        onClick={() => handleUpdateTaskStatus(task.id, 'in_progress')}
                         style={{
                           marginTop: '4px',
                           padding: '5px',
@@ -3123,10 +4159,7 @@ export default function App() {
                         <span>Due {task.dueDate}</span>
                       </div>
                       <button
-                        onClick={() => {
-                          setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'done' } : t));
-                          addToast('Task marked as Completed!', 'success');
-                        }}
+                        onClick={() => handleUpdateTaskStatus(task.id, 'done')}
                         style={{
                           marginTop: '4px',
                           padding: '5px',
@@ -3313,6 +4346,90 @@ export default function App() {
                 <span>Toggle Light / Dark Theme</span>
               </div>
 
+              {/* Search Results from Backend */}
+              {searchQuery.trim().length >= 2 && (
+                <>
+                  <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '10px 10px 4px 10px' }}>
+                    {isSearching ? 'Searching Workspace...' : `Search Results (${searchResults.messages.length} messages, ${searchResults.attachments.length} files)`}
+                  </div>
+                  {searchResults.messages.length === 0 && searchResults.attachments.length === 0 && !isSearching && (
+                    <div style={{ padding: '8px 12px', fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                      No matching messages or files found.
+                    </div>
+                  )}
+                  {searchResults.messages.map(sm => (
+                    <div
+                      key={sm.id}
+                      onClick={() => {
+                        const targetId = sm.channel_id || sm.dm_group_id;
+                        if (targetId) {
+                          setActiveConversationId(targetId);
+                          const matchedConv = conversations.find(c => c.id === targetId);
+                          if (matchedConv) setActiveChannel(matchedConv.name);
+                          setActiveTab('chat');
+                        }
+                        setShowCommandPalette(false);
+                      }}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '2px',
+                        padding: '8px 12px',
+                        borderRadius: 'var(--radius-md)',
+                        cursor: 'pointer',
+                        color: 'var(--text-primary)',
+                        fontSize: 'var(--text-xs)',
+                        borderBottom: '1px solid var(--border-subtle)'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--primary)' }}>
+                          {sm.sender?.display_name || sm.sender?.full_name || 'Member'}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
+                          {formatTime(sm.created_at)}
+                        </span>
+                      </div>
+                      <div style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {sm.content}
+                      </div>
+                    </div>
+                  ))}
+                  {searchResults.attachments.map(att => (
+                    <div
+                      key={att.id}
+                      onClick={() => {
+                        handleDownloadAttachment({
+                          id: att.id,
+                          name: att.file_name,
+                          size: formatBytes(att.file_size),
+                          type: att.content_type,
+                          url: resolveApiUrl(att.file_url)
+                        });
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 12px',
+                        borderRadius: 'var(--radius-md)',
+                        cursor: 'pointer',
+                        color: 'var(--text-primary)',
+                        fontSize: 'var(--text-xs)'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <Paperclip size={14} color="var(--primary)" />
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.file_name}</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{formatBytes(att.file_size)}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+
               <div style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '10px 10px 4px 10px' }}>
                 Channels
               </div>
@@ -3321,6 +4438,7 @@ export default function App() {
                 <div
                   key={ch.id}
                   onClick={() => {
+                    setActiveConversationId(ch.id);
                     setActiveChannel(ch.name);
                     setActiveTab('chat');
                     setShowCommandPalette(false);
@@ -3719,6 +4837,134 @@ export default function App() {
                         outline: 'none'
                       }}
                     />
+                  </div>
+
+                  {/* Security & Password Change */}
+                  <div
+                    style={{
+                      marginTop: 'var(--space-2)',
+                      padding: 'var(--space-4)',
+                      background: 'var(--surface-level-2)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-lg)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 'var(--space-3)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Lock size={16} color="var(--primary)" />
+                      <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Security & Password
+                      </span>
+                    </div>
+
+                    {passwordChangeStatus && (
+                      <div
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: 'var(--text-xs)',
+                          background: passwordChangeStatus.success ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                          color: passwordChangeStatus.success ? 'var(--success)' : 'var(--danger)',
+                          border: `1px solid ${passwordChangeStatus.success ? 'var(--success)' : 'var(--danger)'}`
+                        }}
+                      >
+                        {passwordChangeStatus.text}
+                      </div>
+                    )}
+
+                    <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                      <div>
+                        <label style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                          Current Password
+                        </label>
+                        <input
+                          type="password"
+                          value={currentPasswordInput}
+                          onChange={e => setCurrentPasswordInput(e.target.value)}
+                          placeholder="••••••••"
+                          style={{
+                            width: '100%',
+                            marginTop: '4px',
+                            padding: '8px 12px',
+                            borderRadius: 'var(--radius-md)',
+                            background: 'var(--surface-input)',
+                            border: '1px solid var(--border-default)',
+                            color: 'var(--text-primary)',
+                            fontSize: 'var(--text-sm)',
+                            outline: 'none'
+                          }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+                        <div>
+                          <label style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                            New Password
+                          </label>
+                          <input
+                            type="password"
+                            value={newPasswordInput}
+                            onChange={e => setNewPasswordInput(e.target.value)}
+                            placeholder="Min. 8 characters"
+                            style={{
+                              width: '100%',
+                              marginTop: '4px',
+                              padding: '8px 12px',
+                              borderRadius: 'var(--radius-md)',
+                              background: 'var(--surface-input)',
+                              border: '1px solid var(--border-default)',
+                              color: 'var(--text-primary)',
+                              fontSize: 'var(--text-sm)',
+                              outline: 'none'
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                            Confirm New Password
+                          </label>
+                          <input
+                            type="password"
+                            value={confirmPasswordInput}
+                            onChange={e => setConfirmPasswordInput(e.target.value)}
+                            placeholder="Min. 8 characters"
+                            style={{
+                              width: '100%',
+                              marginTop: '4px',
+                              padding: '8px 12px',
+                              borderRadius: 'var(--radius-md)',
+                              background: 'var(--surface-input)',
+                              border: '1px solid var(--border-default)',
+                              color: 'var(--text-primary)',
+                              fontSize: 'var(--text-sm)',
+                              outline: 'none'
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isChangingPassword || !currentPasswordInput || !newPasswordInput}
+                        style={{
+                          marginTop: '4px',
+                          alignSelf: 'flex-start',
+                          padding: '7px 16px',
+                          borderRadius: 'var(--radius-md)',
+                          background: 'var(--primary)',
+                          color: '#fff',
+                          fontSize: 'var(--text-xs)',
+                          fontWeight: 600,
+                          border: 'none',
+                          cursor: isChangingPassword || !currentPasswordInput || !newPasswordInput ? 'not-allowed' : 'pointer',
+                          opacity: isChangingPassword || !currentPasswordInput || !newPasswordInput ? 0.6 : 1
+                        }}
+                      >
+                        {isChangingPassword ? 'Updating Password...' : 'Update Password'}
+                      </button>
+                    </form>
                   </div>
                 </div>
               )}
@@ -4463,23 +5709,7 @@ export default function App() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
-                    if (!newTaskTitle.trim()) return;
-                    setTasks(prev => [
-                      {
-                        id: 't_' + Date.now(),
-                        title: newTaskTitle.trim(),
-                        status: 'todo',
-                        assignedTo: currentUser.name,
-                        dueDate: 'Tomorrow',
-                        channel: `#${activeChannel}`
-                      },
-                      ...prev
-                    ]);
-                    setNewTaskTitle('');
-                    setShowTaskModal(false);
-                    addToast('Task created and added to board', 'success');
-                  }}
+                  onClick={handleCreateStandaloneTask}
                   disabled={!newTaskTitle.trim()}
                   style={{
                     padding: '8px 16px',
@@ -4494,6 +5724,132 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          MODAL: CREATE CHANNEL
+          ==================================================================== */}
+      {showCreateChannelModal && (
+        <div
+          onClick={() => setShowCreateChannelModal(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.7)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '460px',
+              maxWidth: '92vw',
+              background: 'var(--surface-level-3)',
+              border: '1px solid var(--border-default)',
+              borderRadius: 'var(--radius-xl)',
+              padding: 'var(--space-5)',
+              boxShadow: 'var(--shadow-floating)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Hash size={20} color="var(--primary)" />
+                <h3 style={{ fontSize: 'var(--text-md)', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                  Create a Channel
+                </h3>
+              </div>
+              <button onClick={() => setShowCreateChannelModal(false)} style={{ color: 'var(--text-muted)' }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateChannel} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <div>
+                <label style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                  Channel Name
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', background: 'var(--surface-input)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', padding: '8px 12px' }}>
+                  <span style={{ color: 'var(--text-muted)', fontWeight: 700 }}>#</span>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. project-updates"
+                    value={newChannelName}
+                    onChange={e => setNewChannelName(e.target.value)}
+                    style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 'var(--text-sm)' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                  Description (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="What is this channel about?"
+                  value={newChannelDesc}
+                  onChange={e => setNewChannelDesc(e.target.value)}
+                  style={{
+                    width: '100%',
+                    marginTop: '4px',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--surface-input)',
+                    border: '1px solid var(--border-default)',
+                    color: 'var(--text-primary)',
+                    fontSize: 'var(--text-sm)',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 0' }}>
+                <input
+                  type="checkbox"
+                  id="chk-private-ch"
+                  checked={newChannelIsPrivate}
+                  onChange={e => setNewChannelIsPrivate(e.target.checked)}
+                  style={{ accentColor: 'var(--primary)', cursor: 'pointer' }}
+                />
+                <label htmlFor="chk-private-ch" style={{ fontSize: 'var(--text-xs)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Lock size={12} />
+                  <span>Make channel private (only invited members can view)</span>
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateChannelModal(false)}
+                  style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', color: 'var(--text-secondary)', fontSize: 'var(--text-xs)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingChannel || !newChannelName.trim()}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--primary)',
+                    color: '#fff',
+                    fontWeight: 600,
+                    fontSize: 'var(--text-xs)',
+                    border: 'none',
+                    cursor: isCreatingChannel || !newChannelName.trim() ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {isCreatingChannel ? 'Creating...' : 'Create Channel'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

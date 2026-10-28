@@ -37,6 +37,23 @@ type PaginatedMessages struct {
 
 // ListChannelMessages fetches messages in reverse chronological order using cursor pagination
 func (s *MessageService) ListChannelMessages(ctx context.Context, channelID, currentUserID string, cursor string, limit int) (*PaginatedMessages, error) {
+	var isPrivate, isMember bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT c.is_private,
+		       EXISTS(SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.user_id = $2)
+		FROM channels c
+		WHERE c.id = $1
+	`, channelID, currentUserID).Scan(&isPrivate, &isMember)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrChannelNotFound
+		}
+		return nil, err
+	}
+	if isPrivate && !isMember {
+		return nil, ErrChannelForbidden
+	}
+
 	if limit <= 0 || limit > 50 {
 		limit = 30
 	}
@@ -80,6 +97,9 @@ func (s *MessageService) ListChannelMessages(ctx context.Context, channelID, cur
 		m.Sender = &u
 		messages = append(messages, m)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating channel messages: %w", err)
+	}
 
 	hasMore := false
 	var nextCursor *string
@@ -90,8 +110,8 @@ func (s *MessageService) ListChannelMessages(ctx context.Context, channelID, cur
 		messages = messages[:limit]
 	}
 
-	// Populate reactions for these messages
-	s.populateReactions(ctx, messages, currentUserID)
+	// Populate reactions, attachments, and polls for these messages
+	populateMessagesMetadata(ctx, s.db, messages, currentUserID)
 
 	if messages == nil {
 		messages = []models.Message{}
@@ -111,11 +131,20 @@ func (s *MessageService) SendChannelMessage(ctx context.Context, channelID, user
 		return nil, errors.New("message content or attachment is required")
 	}
 
-	// Find workspace_id from channel
+	// Find workspace_id and privacy settings from channel
 	var workspaceID string
-	err := s.db.QueryRowContext(ctx, `SELECT workspace_id FROM channels WHERE id = $1`, channelID).Scan(&workspaceID)
+	var isPrivate, isMember bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT c.workspace_id, c.is_private,
+		       EXISTS(SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.user_id = $2)
+		FROM channels c
+		WHERE c.id = $1
+	`, channelID, userID).Scan(&workspaceID, &isPrivate, &isMember)
 	if err != nil {
 		return nil, ErrChannelNotFound
+	}
+	if isPrivate && !isMember {
+		return nil, ErrChannelForbidden
 	}
 
 	var msg models.Message
@@ -136,21 +165,22 @@ func (s *MessageService) SendChannelMessage(ctx context.Context, channelID, user
 			_, _ = tx.ExecContext(ctx, `UPDATE attachments SET message_id = $1 WHERE id = $2 AND workspace_id = $3`, msg.ID, attID, workspaceID)
 		}
 
-		// Update unread count for other members in channel
-		_, _ = tx.ExecContext(ctx, `
-			INSERT INTO read_states (user_id, channel_id, last_read_at, unread_count)
-			SELECT cm.user_id, $1, NOW(), 1
-			FROM channel_members cm
-			WHERE cm.channel_id = $1 AND cm.user_id != $2
-			ON CONFLICT (user_id, channel_id) WHERE channel_id IS NOT NULL DO UPDATE SET unread_count = read_states.unread_count + 1;
-		`, channelID, userID)
-
 		return nil
 	})
 
 	if err != nil {
 		return nil, err
 	}
+
+	// Update unread count for other members in channel outside the insert transaction (ordered by user_id to prevent lock contention/deadlocks)
+	_, _ = s.db.ExecContext(ctx, `
+		INSERT INTO read_states (user_id, channel_id, last_read_at, unread_count)
+		SELECT cm.user_id, $1, NOW(), 1
+		FROM channel_members cm
+		WHERE cm.channel_id = $1 AND cm.user_id != $2
+		ORDER BY cm.user_id
+		ON CONFLICT (user_id, channel_id) WHERE channel_id IS NOT NULL DO UPDATE SET unread_count = read_states.unread_count + 1;
+	`, channelID, userID)
 
 	// Fetch sender details
 	var u models.UserResponse
@@ -167,10 +197,29 @@ func (s *MessageService) SendChannelMessage(ctx context.Context, channelID, user
 	msg.Sender = &u
 	msg.Reactions = []models.ReactionSummary{}
 	msg.Attachments = []models.Attachment{}
+	if len(req.AttachmentIDs) > 0 {
+		single := []models.Message{msg}
+		populateMessagesMetadata(ctx, s.db, single, userID)
+		msg = single[0]
+	}
 
-	// Broadcast message.new over WebSocket
+	// Broadcast message.new over WebSocket (only to channel members if private)
 	if s.hub != nil {
-		s.hub.BroadcastToWorkspace(workspaceID, "message.new", msg)
+		if isPrivate {
+			memberRows, err := s.db.QueryContext(ctx, `SELECT user_id FROM channel_members WHERE channel_id = $1`, channelID)
+			if err == nil {
+				defer memberRows.Close()
+				for memberRows.Next() {
+					var memberID string
+					if err := memberRows.Scan(&memberID); err == nil && memberID != "" {
+						s.hub.SendToUser(memberID, "message.new", msg)
+					}
+				}
+				_ = memberRows.Err()
+			}
+		} else {
+			s.hub.BroadcastToWorkspace(workspaceID, "message.new", msg)
+		}
 	}
 
 	return &msg, nil
@@ -242,9 +291,104 @@ func (s *MessageService) DeleteMessage(ctx context.Context, messageID, userID st
 	return nil
 }
 
-// Helper to batch-query reactions for messages
-func (s *MessageService) populateReactions(ctx context.Context, messages []models.Message, currentUserID string) {
-	if len(messages) == 0 {
+// ListThreadMessages retrieves all non-deleted replies to a parent message in chronological order,
+// enforcing workspace, private-channel, and direct-message participant authorization.
+func (s *MessageService) ListThreadMessages(ctx context.Context, parentMessageID, currentUserID string) ([]models.Message, error) {
+	var workspaceID string
+	var channelID, dmGroupID *string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT workspace_id, channel_id, dm_group_id
+		FROM messages
+		WHERE id = $1 AND deleted_at IS NULL
+	`, parentMessageID).Scan(&workspaceID, &channelID, &dmGroupID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrMessageNotFound
+		}
+		return nil, err
+	}
+
+	if channelID != nil && *channelID != "" {
+		var isPrivate, isWsMember, isChanMember bool
+		err := s.db.QueryRowContext(ctx, `
+			SELECT c.is_private,
+			       EXISTS(
+			           SELECT 1 FROM workspace_members wm
+			           JOIN users u ON wm.user_id = u.id
+			           WHERE wm.workspace_id = c.workspace_id AND wm.user_id = $2
+			             AND COALESCE(u.account_state, 'active') = 'active'
+			             AND u.deleted_at IS NULL
+			       ),
+			       EXISTS(SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.user_id = $2)
+			FROM channels c
+			WHERE c.id = $1
+		`, *channelID, currentUserID).Scan(&isPrivate, &isWsMember, &isChanMember)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrChannelNotFound
+			}
+			return nil, err
+		}
+		if !isWsMember || (isPrivate && !isChanMember) {
+			return nil, ErrChannelForbidden
+		}
+	} else if dmGroupID != nil && *dmGroupID != "" {
+		var isDMMember bool
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT EXISTS(SELECT 1 FROM direct_message_members WHERE dm_group_id = $1 AND user_id = $2)
+		`, *dmGroupID, currentUserID).Scan(&isDMMember); err != nil || !isDMMember {
+			return nil, ErrDMForbidden
+		}
+	}
+
+	query := `
+		SELECT m.id, m.workspace_id, m.channel_id, m.dm_group_id, m.sender_id,
+		       m.thread_id, m.parent_id, m.content, m.is_pinned, m.edited_at, m.created_at, m.updated_at,
+		       u.id, u.email, u.full_name, COALESCE(u.display_name, ''), COALESCE(u.avatar_url, ''),
+		       u.role, COALESCE(u.department, ''), COALESCE(u.account_state, 'active'),
+		       u.must_change_password, u.status, COALESCE(u.custom_status, ''), u.created_at
+		FROM messages m
+		JOIN users u ON m.sender_id = u.id
+		WHERE m.parent_id = $1 AND m.deleted_at IS NULL
+		ORDER BY m.created_at ASC;
+	`
+	rows, err := s.db.QueryContext(ctx, query, parentMessageID)
+	if err != nil {
+		return nil, fmt.Errorf("failed querying thread messages: %w", err)
+	}
+	defer rows.Close()
+
+	var replies []models.Message
+	for rows.Next() {
+		var m models.Message
+		var u models.UserResponse
+		if err := rows.Scan(
+			&m.ID, &m.WorkspaceID, &m.ChannelID, &m.DMGroupID, &m.SenderID,
+			&m.ThreadID, &m.ParentID, &m.Content, &m.IsPinned, &m.EditedAt, &m.CreatedAt, &m.UpdatedAt,
+			&u.ID, &u.Email, &u.FullName, &u.DisplayName, &u.AvatarURL,
+			&u.Role, &u.Department, &u.AccountState,
+			&u.MustChangePassword, &u.Status, &u.CustomStatus, &u.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed scanning thread reply: %w", err)
+		}
+		m.Sender = &u
+		replies = append(replies, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating thread replies: %w", err)
+	}
+
+	populateMessagesMetadata(ctx, s.db, replies, currentUserID)
+
+	if replies == nil {
+		replies = []models.Message{}
+	}
+	return replies, nil
+}
+
+// Helper to batch-query reactions, attachments, and polls for messages
+func populateMessagesMetadata(ctx context.Context, database *db.DB, messages []models.Message, currentUserID string) {
+	if len(messages) == 0 || database == nil {
 		return
 	}
 
@@ -254,9 +398,11 @@ func (s *MessageService) populateReactions(ctx context.Context, messages []model
 		msgIDs[i] = messages[i].ID
 		msgMap[messages[i].ID] = &messages[i]
 		messages[i].Reactions = []models.ReactionSummary{}
+		messages[i].Attachments = []models.Attachment{}
 	}
 
-	query := `
+	// 1. Reactions
+	reactionQuery := `
 		SELECT message_id::text, emoji, COUNT(*) as count,
 		       ARRAY_AGG(user_id::text) as user_ids,
 		       BOOL_OR(user_id::text = $2) as has_reacted
@@ -265,26 +411,80 @@ func (s *MessageService) populateReactions(ctx context.Context, messages []model
 		GROUP BY message_id, emoji
 		ORDER BY emoji ASC;
 	`
-
-	rows, err := s.db.QueryContext(ctx, query, pq.Array(msgIDs), currentUserID)
-	if err != nil {
-		return
+	if rows, err := database.QueryContext(ctx, reactionQuery, pq.Array(msgIDs), currentUserID); err == nil {
+		for rows.Next() {
+			var msgID, emoji string
+			var count int
+			var userIDs pq.StringArray
+			var hasReacted bool
+			if err := rows.Scan(&msgID, &emoji, &count, &userIDs, &hasReacted); err == nil {
+				if m, ok := msgMap[msgID]; ok {
+					m.Reactions = append(m.Reactions, models.ReactionSummary{
+						Emoji:      emoji,
+						Count:      count,
+						UserIDs:    []string(userIDs),
+						HasReacted: hasReacted,
+					})
+				}
+			}
+		}
+		_ = rows.Err()
+		rows.Close()
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var msgID, emoji string
-		var count int
-		var userIDs pq.StringArray
-		var hasReacted bool
-		if err := rows.Scan(&msgID, &emoji, &count, &userIDs, &hasReacted); err == nil {
-			if m, ok := msgMap[msgID]; ok {
-				m.Reactions = append(m.Reactions, models.ReactionSummary{
-					Emoji:      emoji,
-					Count:      count,
-					UserIDs:    []string(userIDs),
-					HasReacted: hasReacted,
-				})
+	// 2. Attachments
+	attQuery := `
+		SELECT id, message_id::text, workspace_id, file_name, file_size, content_type,
+		       file_key, file_url, COALESCE(virus_scan_status, 'clean'), uploaded_by, created_at
+		FROM attachments
+		WHERE message_id = ANY($1::uuid[])
+		ORDER BY created_at ASC;
+	`
+	if attRows, err := database.QueryContext(ctx, attQuery, pq.Array(msgIDs)); err == nil {
+		for attRows.Next() {
+			var att models.Attachment
+			var msgID string
+			if err := attRows.Scan(
+				&att.ID, &msgID, &att.WorkspaceID, &att.FileName, &att.FileSize,
+				&att.ContentType, &att.FileKey, &att.FileURL, &att.VirusScanStatus,
+				&att.UploadedBy, &att.CreatedAt,
+			); err == nil {
+				att.MessageID = &msgID
+				if m, ok := msgMap[msgID]; ok {
+					m.Attachments = append(m.Attachments, att)
+				}
+			}
+		}
+		_ = attRows.Err()
+		attRows.Close()
+	}
+
+	// 3. Polls linked via polls.message_id
+	pollSvc := NewPollService(database, nil)
+	pollQuery := `
+		SELECT id, message_id::text
+		FROM polls
+		WHERE message_id = ANY($1::uuid[]);
+	`
+	if pollRows, err := database.QueryContext(ctx, pollQuery, pq.Array(msgIDs)); err == nil {
+		type pollLink struct {
+			pollID string
+			msgID  string
+		}
+		var links []pollLink
+		for pollRows.Next() {
+			var pl pollLink
+			if err := pollRows.Scan(&pl.pollID, &pl.msgID); err == nil {
+				links = append(links, pl)
+			}
+		}
+		_ = pollRows.Err()
+		pollRows.Close()
+		for _, pl := range links {
+			if summary, err := pollSvc.GetPoll(ctx, pl.pollID, currentUserID); err == nil {
+				if m, ok := msgMap[pl.msgID]; ok {
+					m.Poll = summary
+				}
 			}
 		}
 	}

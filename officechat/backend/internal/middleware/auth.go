@@ -27,7 +27,7 @@ type DBQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// extractBearerOrCookieToken retrieves the access token from Authorization header or HttpOnly session cookie
+// extractBearerOrCookieToken retrieves the access token from Authorization header, HttpOnly session cookie, or token query parameter
 func extractBearerOrCookieToken(r *http.Request) (string, bool, string) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
@@ -39,6 +39,9 @@ func extractBearerOrCookieToken(r *http.Request) (string, bool, string) {
 	}
 	if cookie, err := r.Cookie("officechat_access_token"); err == nil && strings.TrimSpace(cookie.Value) != "" {
 		return strings.TrimSpace(cookie.Value), true, ""
+	}
+	if tokenQuery := strings.TrimSpace(r.URL.Query().Get("token")); tokenQuery != "" {
+		return tokenQuery, true, ""
 	}
 	return "", false, "Missing authorization header"
 }
@@ -271,16 +274,24 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := r.RemoteAddr
-			if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-				ip = strings.Split(forwarded, ",")[0]
+			key := r.RemoteAddr
+			if cfIP := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cfIP != "" {
+				key = cfIP
+			} else if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+				key = strings.TrimSpace(strings.Split(forwarded, ",")[0])
+			}
+			// Key by authenticated token when present so multiple office members behind one NAT IP do not throttle each other
+			if tok, ok, _ := extractBearerOrCookieToken(r); ok && tok != "" {
+				key = "tok:" + tok
+			} else if wsTok := strings.TrimSpace(r.URL.Query().Get("token")); wsTok != "" {
+				key = "tok:" + wsTok
 			}
 
 			rl.mu.Lock()
 			now := time.Now()
 			cutoff := now.Add(-rl.window)
 
-			times := rl.clients[ip]
+			times := rl.clients[key]
 			var valid []time.Time
 			for _, t := range times {
 				if t.After(cutoff) {
@@ -295,7 +306,7 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 			}
 
 			valid = append(valid, now)
-			rl.clients[ip] = valid
+			rl.clients[key] = valid
 			rl.mu.Unlock()
 
 			next.ServeHTTP(w, r)

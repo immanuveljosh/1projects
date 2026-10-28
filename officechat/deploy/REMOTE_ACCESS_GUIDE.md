@@ -1,6 +1,9 @@
 # OfficeChat Secure Remote Access Runbook (Cloudflare Tunnel + Caddy + Docker)
 
-This guide explains how OfficeChat is securely exposed from a Windows 11 host to multiple remote office locations using **Cloudflare Tunnel (Free Plan)**, **Caddy 2**, and **Docker Compose**.
+**Cloudflare Account Email:** `immanuvel@bharath.ac.in`  
+**Active Mode:** Free Cloudflare Quick Tunnel (`https://*.trycloudflare.com` — no domain purchase or paid hosting required)
+
+This guide explains how Nithra Chat / OfficeChat is securely exposed from a Windows 11 laptop using **Cloudflare Quick Tunnel (Free)**, **Caddy 2**, and **Docker Compose**.
 
 ---
 
@@ -130,3 +133,4 @@ powershell -ExecutionPolicy Bypass -File D:\1projects\officechat\deploy\scripts\
    ```powershell
    powershell -ExecutionPolicy Bypass -File D:\1projects\officechat\deploy\scripts\manage-remote-access.ps1 -Action restart
    ```
+

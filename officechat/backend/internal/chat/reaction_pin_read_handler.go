@@ -236,6 +236,10 @@ func (h *ReactionPinReadHandler) HandleListChannelPins(w http.ResponseWriter, r 
 			})
 		}
 	}
+	if err := rows.Err(); err != nil {
+		utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed reading channel pins")
+		return
+	}
 	if pins == nil {
 		pins = []map[string]any{}
 	}
@@ -285,6 +289,10 @@ func (h *ReactionPinReadHandler) HandleListDMPins(w http.ResponseWriter, r *http
 				"pinned_by": pinnedBy,
 			})
 		}
+	}
+	if err := rows.Err(); err != nil {
+		utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed reading DM pins")
+		return
 	}
 	if pins == nil {
 		pins = []map[string]any{}

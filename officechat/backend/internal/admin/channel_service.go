@@ -478,8 +478,8 @@ func (s *Service) AddChannelMembers(ctx context.Context, actorID, workspaceID, c
 
 		// Ensure the user is also in workspace_members before adding to channel
 		_, _ = s.db.ExecContext(ctx, `
-			INSERT INTO workspace_members (workspace_id, user_id, role, account_state, joined_at)
-			VALUES ($1, $2, 'Member', 'active', NOW())
+			INSERT INTO workspace_members (workspace_id, user_id, role, joined_at)
+			VALUES ($1, $2, 'Member', NOW())
 			ON CONFLICT (workspace_id, user_id) DO NOTHING
 		`, workspaceID, resolvedUserID)
 

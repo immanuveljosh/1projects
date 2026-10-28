@@ -49,6 +49,9 @@ func (s *WorkspaceService) ListUserWorkspaces(ctx context.Context, userID string
 		}
 		workspaces = append(workspaces, w)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating user workspaces: %w", err)
+	}
 	if workspaces == nil {
 		workspaces = []models.Workspace{}
 	}
@@ -171,6 +174,9 @@ func (s *WorkspaceService) ListWorkspaceMembers(ctx context.Context, workspaceID
 		}
 		wm.User = &u
 		members = append(members, wm)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating workspace members: %w", err)
 	}
 	if members == nil {
 		members = []models.WorkspaceMember{}

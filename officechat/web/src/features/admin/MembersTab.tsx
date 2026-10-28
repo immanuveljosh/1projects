@@ -78,76 +78,12 @@ export const MembersTab: React.FC<MembersTabProps> = ({
       setTotalCount(res.total_count);
     } catch (err: any) {
       console.error('Failed to load members:', err);
-      // Fallback for visual preview if backend DB not populated
-      if (members.length === 0) {
-        setMembers([
-          {
-            id: currentUserId,
-            email: 'admin@officechat.local',
-            full_name: 'Administrator',
-            display_name: 'Admin',
-            avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-            role: 'Owner',
-            department: 'Core Architecture',
-            account_state: 'active',
-            must_change_password: false,
-            status: 'online',
-            custom_status: 'Building OfficeChat 🚀',
-            joined_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-          },
-          {
-            id: 'u_sarah',
-            email: 'sarah.connor@officechat.local',
-            full_name: 'Sarah Connor',
-            display_name: 'Sarah',
-            avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&auto=format&fit=crop&q=80',
-            role: 'Admin',
-            department: 'Engineering',
-            account_state: 'active',
-            must_change_password: false,
-            status: 'online',
-            custom_status: 'Reviewing PRs',
-            joined_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-            created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-          },
-          {
-            id: 'u_elena',
-            email: 'elena.rostova@officechat.local',
-            full_name: 'Elena Rostova',
-            display_name: 'Elena',
-            avatar_url: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=120&auto=format&fit=crop&q=80',
-            role: 'Member',
-            department: 'Product',
-            account_state: 'active',
-            must_change_password: true,
-            status: 'dnd',
-            custom_status: 'In design sprint',
-            joined_at: new Date(Date.now() - 86400000 * 10).toISOString(),
-            created_at: new Date(Date.now() - 86400000 * 10).toISOString(),
-          },
-          {
-            id: 'u_alex',
-            email: 'alex.chen@officechat.local',
-            full_name: 'Alex Chen',
-            display_name: 'Alex',
-            avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80',
-            role: 'Member',
-            department: 'DevOps',
-            account_state: 'suspended',
-            must_change_password: false,
-            status: 'offline',
-            custom_status: 'On standby',
-            joined_at: new Date(Date.now() - 86400000 * 20).toISOString(),
-            created_at: new Date(Date.now() - 86400000 * 20).toISOString(),
-          }
-        ]);
-        setTotalCount(4);
-      }
+      setMembers([]);
+      setTotalCount(0);
     } finally {
       setLoading(false);
     }
-  }, [search, roleFilter, statusFilter, stateFilter, currentUserId, members.length]);
+  }, [search, roleFilter, statusFilter, stateFilter]);
 
   useEffect(() => {
     let ignore = false;

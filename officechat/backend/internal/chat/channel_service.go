@@ -13,7 +13,8 @@ import (
 )
 
 var (
-	ErrChannelNotFound = errors.New("channel not found")
+	ErrChannelNotFound  = errors.New("channel not found")
+	ErrChannelForbidden = errors.New("access denied: you are not a member of this private channel")
 )
 
 type ChannelService struct {
@@ -55,6 +56,9 @@ func (s *ChannelService) ListWorkspaceChannels(ctx context.Context, workspaceID,
 			return nil, fmt.Errorf("failed scanning channel: %w", err)
 		}
 		channels = append(channels, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating channels: %w", err)
 	}
 	if channels == nil {
 		channels = []models.Channel{}
@@ -129,17 +133,32 @@ func (s *ChannelService) GetChannel(ctx context.Context, channelID, userID strin
 		}
 		return nil, err
 	}
+	if c.IsPrivate && !c.IsMember {
+		return nil, ErrChannelForbidden
+	}
 	return &c, nil
 }
 
-// JoinChannel adds the user to channel_members
+// JoinChannel adds the user to channel_members (only allowed for public channels)
 func (s *ChannelService) JoinChannel(ctx context.Context, channelID, userID string) error {
+	var isPrivate bool
+	err := s.db.QueryRowContext(ctx, `SELECT is_private FROM channels WHERE id = $1`, channelID).Scan(&isPrivate)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrChannelNotFound
+		}
+		return err
+	}
+	if isPrivate {
+		return ErrChannelForbidden
+	}
+
 	query := `
 		INSERT INTO channel_members (channel_id, user_id, role, joined_at)
 		VALUES ($1, $2, 'Member', NOW())
 		ON CONFLICT (channel_id, user_id) DO NOTHING;
 	`
-	_, err := s.db.ExecContext(ctx, query, channelID, userID)
+	_, err = s.db.ExecContext(ctx, query, channelID, userID)
 	return err
 }
 

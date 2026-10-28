@@ -142,6 +142,9 @@ func (s *PollService) GetPoll(ctx context.Context, pollID, currentUserID string)
 			totalVotes += opt.VoteCount
 		}
 	}
+	if err := optRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating poll options: %w", err)
+	}
 	if options == nil {
 		options = []models.PollOptionSummary{}
 	}

@@ -1,31 +1,11 @@
 // API client for OfficeChat Admin Console
+import { resolveApiUrl, discoverLatestTunnelUrl } from '../chat/chatApi';
 
 const API_BASE = '/api/v1';
 
 async function getAuthHeader(): Promise<Record<string, string>> {
-  let token = localStorage.getItem('officechat_access_token');
+  const token = localStorage.getItem('officechat_access_token');
   const workspaceId = localStorage.getItem('officechat_workspace_id');
-
-  // If token is missing or legacy demo string, auto-acquire valid JWT from backend
-  if (!token || token === 'demo_admin_jwt_token') {
-    try {
-      const res = await fetch('/api/v1/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'owner@officechat.local', password: 'Admin@Secure2026!' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (typeof data.access_token === 'string') {
-          const validToken = data.access_token;
-          token = validToken;
-          localStorage.setItem('officechat_access_token', validToken);
-        }
-      }
-    } catch {
-      // fallback
-    }
-  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -53,10 +33,30 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     ...(options.headers || {}),
   };
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(resolveApiUrl(`${API_BASE}${endpoint}`), {
+      ...options,
+      headers,
+    });
+    if (res.status === 502 || res.status === 503 || res.status === 530) {
+      await discoverLatestTunnelUrl({ forceExternal: true });
+      res = await fetch(resolveApiUrl(`${API_BASE}${endpoint}`), {
+        ...options,
+        headers,
+      });
+    }
+  } catch (networkErr) {
+    try {
+      await discoverLatestTunnelUrl({ forceExternal: true });
+      res = await fetch(resolveApiUrl(`${API_BASE}${endpoint}`), {
+        ...options,
+        headers,
+      });
+    } catch {
+      throw networkErr;
+    }
+  }
 
   if (!res.ok) {
     let errData: ApiError;

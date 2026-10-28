@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>Nithra OfficeChat — Connecting...</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: #0b0f19;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: #111827;
+      border: 1px solid #1f2937;
+      border-radius: 16px;
+      padding: 28px 24px;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+    }
+    .spinner {
+      width: 38px;
+      height: 38px;
+      margin: 0 auto 18px;
+      border: 3px solid rgba(59, 130, 246, 0.25);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .spinner.hidden {
+      display: none;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    h1 {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+    p {
+      font-size: 0.9rem;
+      color: #94a3b8;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    .url-badge {
+      display: none;
+      margin-top: 14px;
+      padding: 8px 12px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.78rem;
+      color: #60a5fa;
+      word-break: break-all;
+    }
+    .actions {
+      margin-top: 18px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 11px 16px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s ease;
+    }
+    .btn-primary {
+      background: #2563eb;
+      color: #ffffff;
+    }
+    .btn-secondary {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+    }
+    .btn:active {
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div id="spinner" class="spinner" role="status" aria-label="Loading"></div>
+    <h1 id="title">Connecting to Nithra OfficeChat</h1>
+    <p id="status">Fetching the latest secure tunnel address...</p>
+    <div id="urlBadge" class="url-badge"></div>
+    <div id="actions" class="actions">
+      <a id="openBtn" class="btn btn-primary" href="#" rel="noopener">Open OfficeChat</a>
+      <button id="retryBtn" type="button" class="btn btn-secondary">Retry Connection</button>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      var DISCOVERY_URL = 'https://ntfy.sh/officechat-nithra-tunnel-8b4e91f2a3c7/json?poll=1&since=12h';
+      var VALID_TUNNEL_REGEX = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/i;
+
+      var spinnerEl = document.getElementById('spinner');
+      var titleEl = document.getElementById('title');
+      var statusEl = document.getElementById('status');
+      var urlBadgeEl = document.getElementById('urlBadge');
+      var actionsEl = document.getElementById('actions');
+      var openBtnEl = document.getElementById('openBtn');
+      var retryBtnEl = document.getElementById('retryBtn');
+
+      function normalizeUrl(raw) {
+        if (!raw || typeof raw !== 'string') return '';
+        var trimmed = raw.trim().replace(/\/+$/, '');
+        return VALID_TUNNEL_REGEX.test(trimmed) ? trimmed : '';
+      }
+
+      function buildDestinationUrl(baseServerUrl) {
+        var path = window.location.pathname || '/';
+        var search = window.location.search || '';
+        var hash = window.location.hash || '';
+        // Strip GitHub Pages repo prefix if hosted under /<repo>/
+        if (path === '/index.html') {
+          path = '/';
+        }
+        return baseServerUrl + path + search + hash;
+      }
+
+      function showError(message, fallbackUrl) {
+        spinnerEl.classList.add('hidden');
+        titleEl.textContent = 'Connection Notice';
+        statusEl.textContent = message;
+        actionsEl.style.display = 'flex';
+        if (fallbackUrl) {
+          urlBadgeEl.style.display = 'block';
+          urlBadgeEl.textContent = fallbackUrl;
+          openBtnEl.href = fallbackUrl;
+          openBtnEl.style.display = 'inline-flex';
+        } else {
+          openBtnEl.style.display = 'none';
+        }
+      }
+
+      async function discoverAndRedirect() {
+        spinnerEl.classList.remove('hidden');
+        actionsEl.style.display = 'none';
+        titleEl.textContent = 'Connecting to Nithra OfficeChat';
+        statusEl.textContent = 'Locating active server tunnel...';
+
+        try {
+          var res = await fetch(DISCOVERY_URL, {
+            method: 'GET',
+            cache: 'no-store'
+          });
+
+          if (!res.ok) {
+            throw new Error('Discovery feed returned HTTP ' + res.status);
+          }
+
+          var text = await res.text();
+          var lines = text.trim().split('\n').filter(Boolean);
+          var latestServerUrl = '';
+
+          for (var i = lines.length - 1; i >= 0; i--) {
+            try {
+              var outer = JSON.parse(lines[i]);
+              var payload = outer;
+              if (outer && outer.event === 'message' && typeof outer.message === 'string') {
+                payload = JSON.parse(outer.message);
+              }
+              var candidate = normalizeUrl(payload && payload.server_url);
+              if (candidate) {
+                latestServerUrl = candidate;
+                break;
+              }
+            } catch (_) {
+              // Ignore non-JSON lines
+            }
+          }
+
+          if (!latestServerUrl) {
+            throw new Error('No active tunnel URL found in the last 12 hours.');
+          }
+
+          var targetUrl = buildDestinationUrl(latestServerUrl);
+          urlBadgeEl.style.display = 'block';
+          urlBadgeEl.textContent = latestServerUrl;
+          openBtnEl.href = targetUrl;
+          statusEl.textContent = 'Redirecting to OfficeChat...';
+
+          window.location.replace(targetUrl);
+        } catch (err) {
+          showError(
+            (err && err.message) || 'Could not reach the tunnel discovery service. Please check your connection and retry.',
+            ''
+          );
+        }
+      }
+
+      retryBtnEl.addEventListener('click', function () {
+        discoverAndRedirect();
+      });
+
+      discoverAndRedirect();
+    })();
+  </script>
+</body>
+</html>
+

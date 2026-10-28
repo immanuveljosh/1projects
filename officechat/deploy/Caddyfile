@@ -135,9 +135,10 @@
 }
 
 # ==============================================================================
-# CLOUDFLARE TUNNEL & LOCAL HTTP ENTRYPOINT (Port 80 inside edge network)
+# CLOUDFLARE TUNNEL & LOCAL HTTP ENTRYPOINT (Port 80 inside edge network / Quick Tunnel)
+# Accepts *.trycloudflare.com, configured DOMAIN, caddy:80, and localhost
 # ==============================================================================
-http://{$DOMAIN:localhost}, http://caddy:80, http://localhost:80, http://127.0.0.1:80 {
+http://:80, http://{$DOMAIN:localhost}, http://caddy:80, http://localhost:80, http://127.0.0.1:80 {
 	import app_routes
 }
 

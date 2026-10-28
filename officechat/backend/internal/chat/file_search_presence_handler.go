@@ -34,16 +34,31 @@ func NewFileSearchPresenceHandler(database *db.DB, tm *tokens.TokenManager) *Fil
 }
 
 func (h *FileSearchPresenceHandler) RegisterRoutes(r chi.Router) {
-	// Serve public uploaded files
-	r.Get("/files/{key}", h.HandleGetFile)
-
 	r.Group(func(cr chi.Router) {
 		cr.Use(middleware.Authenticator(h.tm))
+
+		// Serve uploaded files only to authenticated workspace members
+		cr.Get("/files/{key}", h.HandleGetFile)
 
 		cr.Post("/workspaces/{id}/files/upload", h.HandleUploadFile)
 		cr.Get("/workspaces/{id}/search", h.HandleSearch)
 		cr.Get("/workspaces/{id}/presence", h.HandleGetPresence)
 	})
+}
+
+func (h *FileSearchPresenceHandler) isActiveWorkspaceMember(r *http.Request, workspaceID, userID string) bool {
+	var ok bool
+	err := h.db.QueryRowContext(r.Context(), `
+		SELECT EXISTS(
+			SELECT 1
+			FROM workspace_members wm
+			JOIN users u ON wm.user_id = u.id
+			WHERE wm.workspace_id = $1 AND wm.user_id = $2
+			  AND COALESCE(u.account_state, 'active') = 'active'
+			  AND u.deleted_at IS NULL
+		)
+	`, workspaceID, userID).Scan(&ok)
+	return err == nil && ok
 }
 
 // HandleUploadFile uploads a file up to 25MB
@@ -55,6 +70,10 @@ func (h *FileSearchPresenceHandler) HandleUploadFile(w http.ResponseWriter, r *h
 	}
 
 	workspaceID := chi.URLParam(r, "id")
+	if !h.isActiveWorkspaceMember(r, workspaceID, userID) {
+		utils.Error(w, http.StatusForbidden, "FORBIDDEN", "Access denied: not an active member of this workspace")
+		return
+	}
 	// 25 MB max memory
 	if err := r.ParseMultipartForm(25 << 20); err != nil {
 		utils.Error(w, http.StatusBadRequest, "FILE_TOO_LARGE", "Maximum file size is 25 MB")
@@ -107,11 +126,33 @@ func (h *FileSearchPresenceHandler) HandleUploadFile(w http.ResponseWriter, r *h
 	utils.JSON(w, http.StatusCreated, map[string]any{"attachment": att})
 }
 
-// HandleGetFile serves an uploaded file by its key
+// HandleGetFile serves an uploaded file by its key to authenticated workspace members
 func (h *FileSearchPresenceHandler) HandleGetFile(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok || userID == "" {
+		utils.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
 	key := filepath.Clean(chi.URLParam(r, "key"))
 	if strings.Contains(key, "..") {
 		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	var hasAccess bool
+	if err := h.db.QueryRowContext(r.Context(), `
+		SELECT EXISTS(
+			SELECT 1
+			FROM attachments a
+			JOIN workspace_members wm ON a.workspace_id = wm.workspace_id
+			JOIN users u ON wm.user_id = u.id
+			WHERE a.file_key = $1 AND wm.user_id = $2
+			  AND COALESCE(u.account_state, 'active') = 'active'
+			  AND u.deleted_at IS NULL
+		)
+	`, key, userID).Scan(&hasAccess); err != nil || !hasAccess {
+		utils.Error(w, http.StatusForbidden, "FORBIDDEN", "Access denied to this file")
 		return
 	}
 
@@ -124,27 +165,44 @@ func (h *FileSearchPresenceHandler) HandleGetFile(w http.ResponseWriter, r *http
 	http.ServeFile(w, r, filePath)
 }
 
-// HandleSearch performs full-text search across messages and files in a workspace
+// HandleSearch performs full-text search across messages and files visible to the user in a workspace
 func (h *FileSearchPresenceHandler) HandleSearch(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok || userID == "" {
+		utils.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
+	if !h.isActiveWorkspaceMember(r, workspaceID, userID) {
+		utils.Error(w, http.StatusForbidden, "FORBIDDEN", "Access denied: not an active member of this workspace")
+		return
+	}
+
 	queryStr := strings.TrimSpace(r.URL.Query().Get("q"))
 	if queryStr == "" {
 		utils.JSON(w, http.StatusOK, map[string]any{"messages": []models.Message{}, "attachments": []models.Attachment{}})
 		return
 	}
 
-	// Search messages
+	// Search messages (restricted to public channels, private channels user belongs to, and DMs user belongs to)
 	msgQuery := `
 		SELECT m.id, m.workspace_id, m.channel_id, m.dm_group_id, m.sender_id, m.content, m.created_at,
 		       u.id, u.email, u.full_name, COALESCE(u.display_name, ''), COALESCE(u.avatar_url, '')
 		FROM messages m
 		JOIN users u ON m.sender_id = u.id
+		LEFT JOIN channels c ON m.channel_id = c.id
 		WHERE m.workspace_id = $1 AND m.deleted_at IS NULL
 		  AND m.search_vector @@ plainto_tsquery('english', $2)
+		  AND (
+		      (m.channel_id IS NOT NULL AND (c.is_private = FALSE OR EXISTS(SELECT 1 FROM channel_members cm WHERE cm.channel_id = m.channel_id AND cm.user_id = $3)))
+		      OR
+		      (m.dm_group_id IS NOT NULL AND EXISTS(SELECT 1 FROM direct_message_members dmm WHERE dmm.dm_group_id = m.dm_group_id AND dmm.user_id = $3))
+		  )
 		ORDER BY m.created_at DESC
 		LIMIT 20;
 	`
-	rows, err := h.db.QueryContext(r.Context(), msgQuery, workspaceID, queryStr)
+	rows, err := h.db.QueryContext(r.Context(), msgQuery, workspaceID, queryStr, userID)
 	var messages []models.Message
 	if err == nil {
 		defer rows.Close()
@@ -158,6 +216,10 @@ func (h *FileSearchPresenceHandler) HandleSearch(w http.ResponseWriter, r *http.
 				m.Sender = &u
 				messages = append(messages, m)
 			}
+		}
+		if err := rows.Err(); err != nil {
+			utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed reading message search results")
+			return
 		}
 	}
 	if messages == nil {
@@ -184,6 +246,10 @@ func (h *FileSearchPresenceHandler) HandleSearch(w http.ResponseWriter, r *http.
 				attachments = append(attachments, a)
 			}
 		}
+		if err := attRows.Err(); err != nil {
+			utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed reading attachment search results")
+			return
+		}
 	}
 	if attachments == nil {
 		attachments = []models.Attachment{}
@@ -197,7 +263,17 @@ func (h *FileSearchPresenceHandler) HandleSearch(w http.ResponseWriter, r *http.
 
 // HandleGetPresence returns live presence status for workspace members
 func (h *FileSearchPresenceHandler) HandleGetPresence(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok || userID == "" {
+		utils.Error(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
+	if !h.isActiveWorkspaceMember(r, workspaceID, userID) {
+		utils.Error(w, http.StatusForbidden, "FORBIDDEN", "Access denied: not an active member of this workspace")
+		return
+	}
 	query := `
 		SELECT u.id, u.status, COALESCE(u.custom_status, ''), u.status_updated_at
 		FROM users u
@@ -224,6 +300,10 @@ func (h *FileSearchPresenceHandler) HandleGetPresence(w http.ResponseWriter, r *
 		if err := rows.Scan(&p.UserID, &p.Status, &p.CustomStatus, &p.StatusUpdatedAt); err == nil {
 			presences = append(presences, p)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed reading presence rows")
+		return
 	}
 	if presences == nil {
 		presences = []MemberPresence{}

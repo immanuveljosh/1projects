@@ -14,6 +14,8 @@
 deploy/cloudflared/*.json
 deploy/cloudflared/*.yml
 deploy/cloudflared/*.yaml
+deploy/backups/
+*.sql.gz
 local.properties
 */local.properties
 **/local.properties

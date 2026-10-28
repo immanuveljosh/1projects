@@ -92,6 +92,10 @@ func (h *DMHandler) HandleListDMMessages(w http.ResponseWriter, r *http.Request)
 
 	res, err := h.service.ListDMMessages(r.Context(), dmID, userID, cursor, limit)
 	if err != nil {
+		if errors.Is(err, ErrDMForbidden) {
+			utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
 		utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve DM messages")
 		return
 	}
@@ -117,6 +121,10 @@ func (h *DMHandler) HandleSendDMMessage(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, ErrDMNotFound) {
 			utils.Error(w, http.StatusNotFound, "NOT_FOUND", "DM group not found")
+			return
+		}
+		if errors.Is(err, ErrDMForbidden) {
+			utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
 			return
 		}
 		utils.Error(w, http.StatusBadRequest, "VALIDATION_FAILED", err.Error())

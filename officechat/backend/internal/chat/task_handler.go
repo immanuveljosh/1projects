@@ -53,6 +53,10 @@ func (h *TaskHandler) HandleCreateTask(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.service.CreateTask(r.Context(), userID, req)
 	if err != nil {
+		if errors.Is(err, ErrTaskForbidden) {
+			utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
 		utils.Error(w, http.StatusBadRequest, "VALIDATION_FAILED", err.Error())
 		return
 	}
@@ -68,6 +72,11 @@ func (h *TaskHandler) HandleListTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := chi.URLParam(r, "id")
+	if err := h.service.AuthorizeWorkspaceAccess(r.Context(), workspaceID, userID); err != nil {
+		utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		return
+	}
+
 	statusFilter := r.URL.Query().Get("status")
 	assignedFilter := r.URL.Query().Get("assigned_to")
 
@@ -88,6 +97,15 @@ func (h *TaskHandler) HandleUpdateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taskID := chi.URLParam(r, "id")
+	if err := h.service.AuthorizeTaskMutation(r.Context(), taskID, userID); err != nil {
+		if errors.Is(err, ErrTaskNotFound) {
+			utils.Error(w, http.StatusNotFound, "NOT_FOUND", "Task not found")
+			return
+		}
+		utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		return
+	}
+
 	var req models.UpdateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.Error(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid JSON payload")
@@ -115,6 +133,15 @@ func (h *TaskHandler) HandleCompleteTask(w http.ResponseWriter, r *http.Request)
 	}
 
 	taskID := chi.URLParam(r, "id")
+	if err := h.service.AuthorizeTaskMutation(r.Context(), taskID, userID); err != nil {
+		if errors.Is(err, ErrTaskNotFound) {
+			utils.Error(w, http.StatusNotFound, "NOT_FOUND", "Task not found")
+			return
+		}
+		utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+		return
+	}
+
 	task, err := h.service.CompleteTask(r.Context(), taskID)
 	if err != nil {
 		if errors.Is(err, ErrTaskNotFound) {

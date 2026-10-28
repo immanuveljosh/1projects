@@ -89,6 +89,10 @@ func (h *ChannelHandler) HandleGetChannel(w http.ResponseWriter, r *http.Request
 			utils.Error(w, http.StatusNotFound, "NOT_FOUND", "Channel not found")
 			return
 		}
+		if errors.Is(err, ErrChannelForbidden) {
+			utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
 		utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retrieve channel")
 		return
 	}
@@ -105,6 +109,14 @@ func (h *ChannelHandler) HandleJoinChannel(w http.ResponseWriter, r *http.Reques
 
 	channelID := chi.URLParam(r, "id")
 	if err := h.service.JoinChannel(r.Context(), channelID, userID); err != nil {
+		if errors.Is(err, ErrChannelNotFound) {
+			utils.Error(w, http.StatusNotFound, "NOT_FOUND", "Channel not found")
+			return
+		}
+		if errors.Is(err, ErrChannelForbidden) {
+			utils.Error(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+			return
+		}
 		utils.Error(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to join channel")
 		return
 	}
