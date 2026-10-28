@@ -399,6 +399,7 @@ type RegisterRequest struct {
 	Password    string `json:"password"`
 	FullName    string `json:"full_name"`
 	DisplayName string `json:"display_name"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
 }
 
 type LoginRequest struct {

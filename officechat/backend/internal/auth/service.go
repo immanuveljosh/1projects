@@ -94,6 +94,19 @@ func (s *Service) Register(ctx context.Context, req models.RegisterRequest, user
 		return nil, fmt.Errorf("failed creating user: %w", err)
 	}
 
+	// Automatically attach user to target or default workspace as Member
+	targetWS := req.WorkspaceID
+	if targetWS == "" {
+		_ = s.db.QueryRowContext(ctx, `SELECT id FROM workspaces ORDER BY created_at ASC LIMIT 1`).Scan(&targetWS)
+	}
+	if targetWS != "" {
+		_, _ = s.db.ExecContext(ctx, `
+			INSERT INTO workspace_members (workspace_id, user_id, role, joined_at, updated_at)
+			VALUES ($1, $2, 'Member', NOW(), NOW())
+			ON CONFLICT (workspace_id, user_id) DO NOTHING;
+		`, targetWS, user.ID)
+	}
+
 	// Generate tokens
 	accessToken, expiresIn, err := s.tm.GenerateAccessToken(user.ID, user.Email, user.Role)
 	if err != nil {

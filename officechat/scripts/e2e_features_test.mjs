@@ -343,7 +343,7 @@ async function run() {
     // 16. Cleanup synthetic test accounts
     try {
       const { execSync } = await import('child_process');
-      execSync(`docker exec officechat-postgres psql -U officechat -d officechat -c "DELETE FROM users WHERE email LIKE 'e2e_%@officechat.local';"`);
+      execSync(`docker exec -e PGPASSWORD=officechat_secure_pass_2026 officechat-postgres psql -U officechat -d officechat -c "DELETE FROM users WHERE email LIKE 'e2e_%@officechat.local';"`);
       console.log('  [PASS] Test Data Cleanup: Removed synthetic E2E accounts');
       total++;
       passed++;
