@@ -73,6 +73,12 @@
   padding: 0 var(--space-6);
   gap: var(--space-2);
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+.admin-nav-bar::-webkit-scrollbar {
+  display: none;
 }
 
 .admin-nav-item {
@@ -274,7 +280,7 @@
   background-color: var(--surface-level-2);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
   box-shadow: var(--shadow-sm);
 }
 
@@ -452,8 +458,35 @@
 /* Cards & Security Grid */
 .security-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
   gap: var(--space-6);
+}
+
+@media (max-width: 768px) {
+  .admin-header {
+    padding: 0 var(--space-3);
+    height: auto;
+    min-height: 56px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .admin-nav-bar {
+    padding: 0 var(--space-3);
+  }
+  .admin-content {
+    padding: var(--space-3);
+  }
+  .admin-search-box {
+    min-width: 0;
+    width: 100%;
+    flex: 1 1 100%;
+  }
+  .admin-filter-group {
+    flex-wrap: wrap;
+    width: 100%;
+  }
 }
 
 .admin-card {

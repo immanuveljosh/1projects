@@ -18,7 +18,7 @@ import http from 'http';
 import https from 'https';
 import { URL } from 'url';
 
-const BASE_URL = process.env.OFFICECHAT_URL || 'http://127.0.0.1';
+const BASE_URL = (process.env.OFFICECHAT_URL || 'http://127.0.0.1').trim().replace(/\/$/, '');
 const WORKSPACE_ID = '11111111-1111-1111-1111-111111111111';
 
 function request(method, path, body = null, headers = {}) {
@@ -343,7 +343,10 @@ async function run() {
     // 16. Cleanup synthetic test accounts
     try {
       const { execSync } = await import('child_process');
-      execSync(`docker exec -e PGPASSWORD=officechat_secure_pass_2026 officechat-postgres psql -U officechat -d officechat -c "DELETE FROM users WHERE email LIKE 'e2e_%@officechat.local';"`);
+      execSync(
+        `"DELETE FROM users WHERE email LIKE 'e2e_%@officechat.local';" | docker exec -i officechat-postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`,
+        { stdio: 'ignore', shell: 'powershell.exe' }
+      );
       console.log('  [PASS] Test Data Cleanup: Removed synthetic E2E accounts');
       total++;
       passed++;

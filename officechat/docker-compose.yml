@@ -36,7 +36,7 @@ services:
       - officechat-network
 
   minio:
-    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    image: minio/minio:latest
     container_name: officechat-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -49,22 +49,22 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
     networks:
       - officechat-network
 
   minio-init:
-    image: minio/mc:RELEASE.2024-05-09T17-04-24Z
+    image: minio/mc:latest
     container_name: officechat-minio-init
     depends_on:
       minio:
         condition: service_started
     entrypoint: >
       /bin/sh -c "
-      sleep 2;
+      sleep 5;
       /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin};
       /usr/bin/mc mb --ignore-existing myminio/${MINIO_BUCKET:-officechat-files};
       /usr/bin/mc anonymous set download myminio/${MINIO_BUCKET:-officechat-files};

@@ -1967,98 +1967,100 @@ export default function App() {
   };
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', background: 'var(--surface-level-1)', overflow: 'hidden' }}>
+    <div className="app-shell">
       {/* ====================================================================
           1. CHANNELS & DMs SIDEBAR (Surface Level 2)
           ==================================================================== */}
       <aside
         className={`sidebar-responsive ${isMobileMenuOpen ? 'open' : ''}`}
-        style={{
-          width: '240px',
-          background: 'var(--surface-level-2)',
-          borderRight: '1px solid var(--border-subtle)',
-          display: 'flex',
-          flexDirection: 'column',
-          userSelect: 'none',
-          flexShrink: 0
-        }}
       >
         {/* Workspace Title & Settings Header */}
         <div
           style={{
             height: '52px',
-            padding: '0 var(--space-4)',
+            padding: '0 var(--space-3)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            borderBottom: '1px solid var(--border-subtle)'
+            gap: '6px',
+            borderBottom: '1px solid var(--border-subtle)',
+            flexShrink: 0
           }}
         >
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span>{activeWorkspace}</span>
-              <ChevronDown size={14} color="var(--text-muted)" />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeWorkspace}</span>
+              <ChevronDown size={14} color="var(--text-muted)" style={{ flexShrink: 0 }} />
             </div>
-            <div style={{ fontSize: 'var(--text-2xs)', color: wsConnected ? 'var(--success)' : 'var(--warning)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
-              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: wsConnected ? 'var(--success)' : 'var(--warning)' }} />
-              {wsConnected ? 'Live REST & WebSocket' : 'Connecting WebSocket...'}
+            <div style={{ fontSize: 'var(--text-2xs)', color: wsConnected ? 'var(--success)' : 'var(--warning)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500, whiteSpace: 'nowrap' }}>
+              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: wsConnected ? 'var(--success)' : 'var(--warning)', flexShrink: 0 }} />
+              <span>{wsConnected ? 'Live REST & WS' : 'Connecting...'}</span>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
             {/* Prominent Admin Console entry in top workspace header */}
             {(currentUser.role.toLowerCase() === 'owner' || currentUser.role.toLowerCase() === 'admin') && (
               <button
                 id="btn-admin-console-header"
-                onClick={() => setShowAdminConsole(true)}
+                onClick={() => { setShowAdminConsole(true); setIsMobileMenuOpen(false); }}
                 title="Admin Console (Owner/Admin)"
                 data-tooltip="Admin Console"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '5px',
-                  padding: '4px 9px',
+                  gap: '4px',
+                  padding: '4px 7px',
                   borderRadius: 'var(--radius-sm)',
                   background: 'var(--primary-subtle)',
                   border: '1px solid var(--primary-border)',
                   color: 'var(--primary)',
-                  fontSize: 'var(--text-xs)',
+                  fontSize: '11px',
                   fontWeight: 600,
                   cursor: 'pointer',
                   transition: 'all var(--transition-fast)'
                 }}
               >
-                <Shield size={13} />
+                <Shield size={12} />
                 <span>Admin</span>
               </button>
             )}
             <button
-              onClick={() => setShowCreateChannelModal(true)}
+              onClick={() => { setShowCreateChannelModal(true); setIsMobileMenuOpen(false); }}
               data-tooltip="Create Channel"
               title="Create Channel"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '4px',
-                padding: '4px 8px',
+                gap: '3px',
+                padding: '4px 7px',
                 borderRadius: 'var(--radius-sm)',
                 background: 'var(--surface-hover)',
                 border: '1px solid var(--border-default)',
                 color: 'var(--text-primary)',
-                fontSize: 'var(--text-xs)',
+                fontSize: '11px',
                 fontWeight: 600,
                 cursor: 'pointer',
                 transition: 'all var(--transition-fast)'
               }}
             >
-              <Plus size={14} />
+              <Plus size={13} />
               <span>Channel</span>
             </button>
             <button
-              onClick={() => openSettingsModal('account')}
+              onClick={() => { openSettingsModal('account'); setIsMobileMenuOpen(false); }}
               data-tooltip="Workspace Settings"
-              style={{ padding: 'var(--space-1)', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)' }}
+              style={{ padding: '4px', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)' }}
             >
-              <Settings size={16} />
+              <Settings size={15} />
+            </button>
+            <button
+              type="button"
+              className="mobile-only-btn"
+              onClick={() => setIsMobileMenuOpen(false)}
+              title="Close Menu"
+              style={{ padding: '4px', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)' }}
+            >
+              <X size={16} />
             </button>
           </div>
         </div>
@@ -2498,30 +2500,23 @@ export default function App() {
       {/* ====================================================================
           3. MAIN CENTER WORKSPACE AREA (Surface Level 1)
           ==================================================================== */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--surface-level-1)', overflow: 'hidden' }}>
+      <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-level-1)', overflow: 'hidden' }}>
         {/* Top Header Bar (Surface Level 2) */}
-        <header
-          style={{
-            height: '52px',
-            padding: '0 var(--space-4)',
-            borderBottom: '1px solid var(--border-subtle)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'var(--surface-level-2)',
-            zIndex: 10
-          }}
-        >
+        <header className="chat-header">
           {/* Left: Mobile Toggle & Channel Info */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', minWidth: 0, flex: 1 }}>
             <button
+              type="button"
               onClick={() => setIsMobileMenuOpen(prev => !prev)}
               data-tooltip="Toggle Sidebar"
+              title="Open Menu"
               style={{
-                display: 'none',
-                padding: 'var(--space-1)',
+                padding: '6px',
                 borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-secondary)'
+                color: 'var(--text-primary)',
+                background: 'var(--surface-hover)',
+                border: '1px solid var(--border-subtle)',
+                flexShrink: 0
               }}
               className="mobile-only-btn"
             >
@@ -2532,28 +2527,28 @@ export default function App() {
               const activeConv = conversations.find(c => c.name === activeChannel || c.id === activeConversationId);
               if (activeConv && !activeConv.isGroup) {
                 return (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ position: 'relative', width: '28px', height: '28px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                    <div style={{ position: 'relative', width: '28px', height: '28px', flexShrink: 0 }}>
                       <img src={activeConv.avatar} alt={activeConv.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
                       {activeConv.status && (
                         <span style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '8px', height: '8px', borderRadius: '50%', background: getStatusColor(activeConv.status), border: '1.5px solid var(--surface-level-2)' }} />
                       )}
                     </div>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)', color: 'var(--text-primary)' }}>{activeConv.name}</div>
-                      <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{activeConv.role || 'Team Member'} • {activeConv.status || 'Active'}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeConv.name}</div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeConv.role || 'Team Member'} • {activeConv.status || 'Active'}</div>
                     </div>
                   </div>
                 );
               }
               return (
                 <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)' }}>
-                    <Hash size={17} color="var(--primary)" />
-                    <span>{activeChannel}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 700, fontSize: 'var(--text-md)', color: 'var(--text-primary)', minWidth: 0 }}>
+                    <Hash size={17} color="var(--primary)" style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeChannel}</span>
                   </div>
-                  <div style={{ width: '1px', height: '16px', background: 'var(--border-subtle)' }} />
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <div className="hide-on-tablet" style={{ width: '1px', height: '16px', background: 'var(--border-subtle)', flexShrink: 0 }} />
+                  <div className="hide-on-tablet" style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     Core architecture discussions & cross-team planning
                   </div>
                 </>
@@ -2562,25 +2557,15 @@ export default function App() {
           </div>
 
           {/* Right: Search Bar & Unified Secondary Actions */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
             {/* Interactive Search Bar with Ctrl+K shortcut badge */}
             <div
               onClick={() => setShowCommandPalette(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: 'var(--surface-level-1)',
-                border: '1px solid var(--border-default)',
-                borderRadius: 'var(--radius-md)',
-                padding: '5px 10px',
-                width: '210px',
-                cursor: 'pointer',
-                transition: 'all var(--transition-fast)'
-              }}
+              className="header-search-trigger"
+              title="Search Workspace (Ctrl+K)"
             >
-              <Search size={14} color="var(--text-muted)" />
-              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', flex: 1 }}>
+              <Search size={14} color="var(--text-muted)" style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 Search messages...
               </span>
               <kbd
@@ -2603,11 +2588,12 @@ export default function App() {
             <button
               onClick={() => setShowPollModal(true)}
               data-tooltip="Create Poll"
+              title="Create Poll"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '5px',
-                padding: '6px 11px',
+                padding: '6px 9px',
                 borderRadius: 'var(--radius-md)',
                 background: 'var(--surface-hover)',
                 border: '1px solid var(--border-subtle)',
@@ -2619,18 +2605,19 @@ export default function App() {
               }}
             >
               <BarChart2 size={14} color="var(--primary)" />
-              <span>Poll</span>
+              <span className="hide-on-mobile">Poll</span>
             </button>
 
             {/* Unified Secondary Button 2: New Task */}
             <button
               onClick={() => setShowTaskModal(true)}
               data-tooltip="New Task"
+              title="New Task"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '5px',
-                padding: '6px 11px',
+                padding: '6px 9px',
                 borderRadius: 'var(--radius-md)',
                 background: 'var(--surface-hover)',
                 border: '1px solid var(--border-subtle)',
@@ -2642,7 +2629,7 @@ export default function App() {
               }}
             >
               <CheckSquare size={14} color="var(--primary)" />
-              <span>New Task</span>
+              <span className="hide-on-mobile">New Task</span>
             </button>
 
             {/* Live Tunnel / Server Connection Status Pill */}
@@ -2660,7 +2647,7 @@ export default function App() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '5px',
-                padding: '4px 9px',
+                padding: '4px 8px',
                 borderRadius: 'var(--radius-full)',
                 background: wsConnected
                   ? 'rgba(16, 185, 129, 0.12)'
@@ -2694,7 +2681,7 @@ export default function App() {
                     : 'var(--danger)'
                 }}
               />
-              <span>
+              <span className="hide-on-small">
                 {wsConnected
                   ? 'Connected'
                   : tunnelState?.status === 'discovering'
@@ -2709,6 +2696,7 @@ export default function App() {
 
             {/* Member count pill */}
             <div
+              className="hide-on-mobile"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -2746,7 +2734,7 @@ export default function App() {
                 }}
               >
                 <BellOff size={12} />
-                <span>DND</span>
+                <span className="hide-on-small">DND</span>
               </button>
             )}
 
@@ -2771,7 +2759,7 @@ export default function App() {
                 }}
               >
                 <VolumeX size={12} />
-                <span>Muted</span>
+                <span className="hide-on-small">Muted</span>
               </button>
             )}
 
@@ -2825,19 +2813,10 @@ export default function App() {
 
         {/* View Switch Content: Chat Feed vs Task Board */}
         {activeTab === 'chat' ? (
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
             {/* Center Chat Message Stream */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div
-                style={{
-                  flex: 1,
-                  overflowY: 'auto',
-                  padding: 'var(--space-4) var(--space-6)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 'var(--space-1)'
-                }}
-              >
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div className="chat-feed-scroll">
                 {/* Tunnel Connection Status & Auto-Discovery Banner */}
                 {isAuthenticated && (!wsConnected || tunnelState?.status === 'discovering' || tunnelState?.status === 'reconnecting' || tunnelState?.status === 'error') && (
                   <div
@@ -3245,13 +3224,13 @@ export default function App() {
                           {/* Interactive Poll Card inside bubble */}
                           {msg.poll && (
                             <div
+                              className="poll-card"
                               style={{
                                 marginTop: 'var(--space-2)',
                                 background: isSent ? 'rgba(0, 0, 0, 0.22)' : 'var(--surface-level-3)',
                                 border: isSent ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid var(--border-default)',
                                 borderRadius: 'var(--radius-lg)',
-                                padding: 'var(--space-3)',
-                                minWidth: '280px'
+                                padding: 'var(--space-3)'
                               }}
                             >
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-2)' }}>
@@ -3327,11 +3306,11 @@ export default function App() {
                                     return (
                                       <div
                                         key={att.id}
+                                        className="attachment-img-card"
                                         style={{
                                           borderRadius: 'var(--radius-md)',
                                           overflow: 'hidden',
                                           border: isSent ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid var(--border-subtle)',
-                                          maxWidth: '340px',
                                           cursor: 'pointer',
                                           position: 'relative'
                                         }}
@@ -3382,6 +3361,7 @@ export default function App() {
                                   return (
                                     <div
                                       key={att.id}
+                                      className="attachment-card"
                                       style={{
                                         display: 'flex',
                                         alignItems: 'center',
@@ -3391,8 +3371,7 @@ export default function App() {
                                         borderRadius: 'var(--radius-md)',
                                         background: isSent ? 'rgba(0, 0, 0, 0.2)' : 'var(--surface-input)',
                                         border: isSent ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid var(--border-subtle)',
-                                        fontSize: 'var(--text-xs)',
-                                        minWidth: '220px'
+                                        fontSize: 'var(--text-xs)'
                                       }}
                                     >
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
@@ -3576,7 +3555,7 @@ export default function App() {
                   Emoji, Attachment +, Inside: clip, photo shortcut, Send plane
                   States: typing, replying preview, editing preview
                   ================================================================ */}
-              <div style={{ padding: '0 var(--space-6) var(--space-4) var(--space-6)' }}>
+              <div className="composer-wrapper">
                 {/* Live Typing Indicator Bar */}
                 {Object.values(typingUsers).length > 0 && (
                   <div
@@ -3747,6 +3726,8 @@ export default function App() {
                               borderRadius: 'var(--radius-md)',
                               padding: '8px 10px',
                               display: 'flex',
+                              flexWrap: 'wrap',
+                              maxWidth: 'calc(100vw - 32px)',
                               gap: '6px',
                               boxShadow: 'var(--shadow-floating)',
                               zIndex: 100
@@ -3783,7 +3764,7 @@ export default function App() {
                             style={{
                               position: 'absolute',
                               bottom: 'calc(100% + 10px)',
-                              left: '30px',
+                              left: 0,
                               background: 'var(--surface-level-3)',
                               border: '1px solid var(--border-default)',
                               borderRadius: 'var(--radius-md)',
@@ -3793,7 +3774,8 @@ export default function App() {
                               gap: '2px',
                               boxShadow: 'var(--shadow-floating)',
                               zIndex: 100,
-                              width: '210px'
+                              width: '210px',
+                              maxWidth: 'calc(100vw - 32px)'
                             }}
                           >
                             <button
@@ -3903,16 +3885,7 @@ export default function App() {
                 ================================================================ */}
             {activeThreadMessage && (
               <aside
-                className="animate-slide-panel"
-                style={{
-                  width: '360px',
-                  background: 'var(--surface-level-2)',
-                  borderLeft: '1px solid var(--border-subtle)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  overflow: 'hidden',
-                  flexShrink: 0
-                }}
+                className="thread-panel animate-slide-panel"
               >
                 {/* Thread Header */}
                 <div
@@ -4039,8 +4012,8 @@ export default function App() {
           /* ====================================================================
              TASKS BOARD VIEW (Surface Level 1 & Level 2 Cards)
              ==================================================================== */
-          <div style={{ flex: 1, padding: 'var(--space-6)', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-5)' }}>
+          <div className="tasks-board-wrapper">
+            <div className="tasks-board-header">
               <div>
                 <h2 style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
                   Office Tasks Board
@@ -4070,7 +4043,7 @@ export default function App() {
             </div>
 
             {/* 3 Kanban Columns */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))', gap: 'var(--space-4)' }}>
               {/* Column 1: To Do */}
               <div style={{ background: 'var(--surface-level-2)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-4)', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-3)' }}>
@@ -4475,13 +4448,14 @@ export default function App() {
         >
           <div
             onClick={e => e.stopPropagation()}
+            className="modal-card-responsive"
             style={{
               background: 'var(--surface-level-3)',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-xl)',
               width: '640px',
               maxWidth: '95vw',
-              maxHeight: '88vh',
+              maxHeight: '88dvh',
               display: 'flex',
               flexDirection: 'column',
               boxShadow: 'var(--shadow-floating)',
@@ -4516,14 +4490,7 @@ export default function App() {
             </div>
 
             {/* Navigation Tabs Bar */}
-            <div
-              style={{
-                display: 'flex',
-                background: 'var(--surface-level-2)',
-                borderBottom: '1px solid var(--border-subtle)',
-                padding: '0 var(--space-5)'
-              }}
-            >
+            <div className="settings-tabs-bar">
               <button
                 type="button"
                 onClick={() => setSettingsTab('account')}
@@ -4651,7 +4618,7 @@ export default function App() {
                   </div>
 
                   {/* 2-Column Fields Grid */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}>
+                  <div className="responsive-grid-2">
                     <div>
                       <label style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                         Account Name
@@ -4783,7 +4750,7 @@ export default function App() {
                     <label style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                       Status Presence
                     </label>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-2)', marginTop: '4px' }}>
+                    <div className="presence-grid-4">
                       {(['online', 'away', 'dnd', 'offline'] as const).map(st => (
                         <button
                           key={st}
@@ -4898,7 +4865,7 @@ export default function App() {
                         />
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-2)' }}>
+                      <div className="responsive-grid-2">
                         <div>
                           <label style={{ fontSize: 'var(--text-2xs)', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                             New Password
@@ -5152,7 +5119,7 @@ export default function App() {
                     </p>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
+                  <div className="responsive-grid-2">
                     {/* Theme Option 1: Black (Dark Mode) */}
                     <div
                       onClick={() => {
@@ -5524,11 +5491,13 @@ export default function App() {
         >
           <div
             onClick={e => e.stopPropagation()}
+            className="modal-card-responsive"
             style={{
               background: 'var(--surface-level-3)',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-xl)',
               width: '440px',
+              maxWidth: '94vw',
               padding: 'var(--space-6)',
               boxShadow: 'var(--shadow-floating)'
             }}
@@ -5658,11 +5627,13 @@ export default function App() {
         >
           <div
             onClick={e => e.stopPropagation()}
+            className="modal-card-responsive"
             style={{
               background: 'var(--surface-level-3)',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-xl)',
               width: '420px',
+              maxWidth: '94vw',
               padding: 'var(--space-6)',
               boxShadow: 'var(--shadow-floating)'
             }}
@@ -5747,9 +5718,10 @@ export default function App() {
         >
           <div
             onClick={e => e.stopPropagation()}
+            className="modal-card-responsive"
             style={{
               width: '460px',
-              maxWidth: '92vw',
+              maxWidth: '94vw',
               background: 'var(--surface-level-3)',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-xl)',
@@ -5873,11 +5845,13 @@ export default function App() {
         >
           <div
             onClick={e => e.stopPropagation()}
+            className="modal-card-responsive"
             style={{
               background: 'var(--surface-level-3)',
               border: '1px solid var(--border-default)',
               borderRadius: 'var(--radius-xl)',
               width: '390px',
+              maxWidth: '94vw',
               padding: 'var(--space-6)',
               boxShadow: 'var(--shadow-floating)'
             }}

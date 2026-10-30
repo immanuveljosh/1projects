@@ -138,6 +138,7 @@
 html, body, #root {
   width: 100%;
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
   font-family: var(--font-sans);
   background-color: var(--surface-level-1);
@@ -316,20 +317,238 @@ input, textarea, select {
   font-size: 13px;
 }
 
-/* Responsive Drawer for mobile */
+/* Responsive App Shell & Drawer */
+.app-shell {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--surface-level-1);
+  overflow: hidden;
+}
+
+.sidebar-responsive {
+  width: 268px;
+  background: var(--surface-level-2);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  flex-shrink: 0;
+  transition: transform var(--transition-smooth);
+}
+
+.mobile-only-btn {
+  display: none !important;
+}
+
+.chat-header {
+  height: 52px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  background: var(--surface-level-2);
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.header-search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-level-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 5px 10px;
+  width: 210px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.chat-feed-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-4) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.composer-wrapper {
+  padding: 0 var(--space-6) var(--space-4) var(--space-6);
+  flex-shrink: 0;
+}
+
+.thread-panel {
+  width: 360px;
+  background: var(--surface-level-2);
+  border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.poll-card {
+  min-width: 260px;
+  max-width: 100%;
+}
+
+.attachment-card {
+  min-width: 220px;
+  max-width: 100%;
+}
+
+.attachment-img-card {
+  max-width: 340px;
+  width: 100%;
+}
+
+.responsive-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.presence-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+  margin-top: 4px;
+}
+
+.settings-tabs-bar {
+  display: flex;
+  background: var(--surface-level-2);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 var(--space-5);
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+.settings-tabs-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.tasks-board-wrapper {
+  flex: 1;
+  padding: var(--space-6);
+  overflow-y: auto;
+}
+
+.tasks-board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+
+@media (max-width: 1100px) {
+  .hide-on-tablet {
+    display: none !important;
+  }
+  .header-search-trigger {
+    width: 150px;
+  }
+  .header-search-trigger kbd {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .thread-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(380px, 100vw) !important;
+    z-index: 60;
+    box-shadow: var(--shadow-floating);
+  }
+}
+
 @media (max-width: 768px) {
   .sidebar-responsive {
     position: fixed;
     top: 0;
     bottom: 0;
     left: 0;
-    z-index: 50;
+    width: min(290px, 86vw) !important;
+    height: 100dvh;
+    z-index: 65;
     transform: translateX(-100%);
-    transition: transform var(--transition-smooth);
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--shadow-floating);
   }
   .sidebar-responsive.open {
     transform: translateX(0);
+  }
+  .mobile-only-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+  .hide-on-mobile {
+    display: none !important;
+  }
+  .chat-header {
+    padding: 0 10px;
+    gap: 6px;
+  }
+  .header-search-trigger {
+    width: 32px;
+    height: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+  .header-search-trigger span,
+  .header-search-trigger kbd {
+    display: none;
+  }
+  .chat-feed-scroll {
+    padding: 10px 10px;
+  }
+  .composer-wrapper {
+    padding: 0 8px 8px 8px;
+  }
+  .tasks-board-wrapper {
+    padding: 14px 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .hide-on-small {
+    display: none !important;
+  }
+  .responsive-grid-2 {
+    grid-template-columns: 1fr !important;
+  }
+  .poll-card,
+  .attachment-card {
+    min-width: 0 !important;
+    width: 100%;
+  }
+  .attachment-img-card {
+    max-width: 100% !important;
+  }
+  .settings-tabs-bar {
+    padding: 0 var(--space-2);
+  }
+  .modal-card-responsive {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 92dvh !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .presence-grid-4 {
+    grid-template-columns: repeat(2, 1fr) !important;
   }
 }
 
@@ -441,12 +660,27 @@ input, textarea, select {
 }
 
 .message-bubble {
-  max-width: 68%;
-  min-width: 120px;
+  max-width: 72%;
+  min-width: 110px;
   position: relative;
   padding: 11px 16px 9px 16px;
   word-wrap: break-word;
+  overflow-wrap: break-word;
   transition: all var(--transition-fast);
+}
+
+@media (max-width: 768px) {
+  .message-bubble {
+    max-width: 86%;
+    min-width: 85px;
+    padding: 9px 12px 8px 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .message-bubble {
+    max-width: 90%;
+  }
 }
 
 /* Sent: Blue-to-Violet Gradient on Right */
@@ -556,6 +790,13 @@ input, textarea, select {
   transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
   transform: translateY(4px);
   z-index: 35;
+  max-width: calc(100vw - 32px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.bubble-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* Hit-box bridge so moving cursor from bubble to toolbar never causes hover loss */
@@ -602,6 +843,8 @@ input, textarea, select {
   padding: 6px 8px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  max-width: min(320px, calc(100vw - 32px));
   gap: 6px;
   box-shadow: var(--shadow-floating);
   z-index: 100;
